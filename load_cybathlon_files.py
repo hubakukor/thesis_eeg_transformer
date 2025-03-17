@@ -33,8 +33,18 @@ def load_fif_data(data_dir):
             # Read the EDF file
             raw = mne.io.read_raw_fif(fif_path,preload=False)
 
-            # Extract events and event_id from annotations (T0, T1, T2)
+            # Extract events and event_id from annotations
             events, event_id = mne.events_from_annotations(raw)
+
+            event_id = {
+                'Stimulus/13': 1,  # Both Legs
+                'Stimulus/15': 2  # Subtraction
+            }
+
+            # Filter only relevant event types (Both Legs and Subtraction)
+            filtered_events = [e for e in events if e[-1] in event_id.values()]
+            events = np.array(filtered_events)
+
 
             # Create epochs with modified events and filtered_event_id
             epochs = mne.Epochs(raw, events, event_id, tmin=0, tmax=3, baseline=None, preload=True)
@@ -46,6 +56,7 @@ def load_fif_data(data_dir):
             X.append(epoch_data)
             Y.append(epochs.events[:, -1])
 
+            '''
             #print some general info about the data
             print(raw.info)
             print(f"Sampling frequency: {raw.info['sfreq']} Hz")
@@ -54,6 +65,11 @@ def load_fif_data(data_dir):
             print("Annotations:", raw.annotations)
             print("Extracted events:\n", events)
             print("Event ID mapping:", event_id)
+            unique, counts = np.unique(events[:, -1], return_counts=True)
+            print("Filtered Event Frequency:", dict(zip(unique, counts)))
+            print("Final unique labels in Y:", np.unique(Y))
+            '''
+
 
     # Convert the list to numpy array
     X = np.concatenate(X, axis=0)
