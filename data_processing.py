@@ -114,7 +114,7 @@ def load_edf_data(data_dir):
 X_train, X_test, Y_train, Y_test = load_edf_data(data_dir)
 
 #Second dataset (22 channels)
-gdf_file_path = r"D:\suli\önlab\BCICIV_2a_gdf"
+#gdf_file_path = r"D:\suli\önlab\BCICIV_2a_gdf"
 
 
 def load_training_files(data_folder, tmin=-0.2, tmax=4):
@@ -202,7 +202,7 @@ def load_training_files(data_folder, tmin=-0.2, tmax=4):
 
 
 # Load the training data for the second dataset
-X2_10_20, Y2 = load_training_files(gdf_file_path)
+#X2_10_20, Y2 = load_training_files(gdf_file_path)
 
 # # Check the results
 # print(f"Data shape: {X2.shape}")  # (n_samples, n_channels, n_times)
@@ -254,4 +254,4 @@ current_channels = ['Fz..', 'Fc3.', 'Fc1.', 'Fcz.', 'Fc2.', 'Fc4.',
                     'P1..', 'Pz..', 'P2..', 'Poz.']
 
 # Reformat the smaller dataset to match the 10-10 system
-X2 = reformat_to_10_10_system(X2_10_20, current_channels, target_channels)
+#X2 = reformat_to_10_10_system(X2_10_20, current_channels, target_channels)

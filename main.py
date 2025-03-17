@@ -1,12 +1,13 @@
-import data_processing
-import train_validate
-import model
+#import data_processing
+#import train_validate
+#import model
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
+from load_cybathlon_files import load_fif_data
 
 
 
@@ -21,3 +22,8 @@ import torch.optim as optim
 
 # Validate the model
 #validate_model(model, val_loader, criterion, device)
+
+#load data from par2024 global c
+data_dir = r"D:\suli\thesis\par2024_two_cmd_c_global\par2024_two_cmd_c_global"
+
+X_train, X_test, Y_train, Y_test = load_fif_data(data_dir)
