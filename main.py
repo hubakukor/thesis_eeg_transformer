@@ -4,7 +4,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
-from load_cybathlon_files import load_fif_data
+import numpy as np
+from loading import load_fif_data
 from train_validate import train_model, validate_model
 from model import EEGTransformerModel
 
@@ -22,14 +23,21 @@ from model import EEGTransformerModel
 #validate_model(model, val_loader, criterion, device)
 
 #load data from files
-data_dir_c = r"D:\suli\thesis\par2024_two_cmd_c_global\par2024_two_cmd_c_global"
-X_train_c, X_test_c, Y_train_c, Y_test_c = load_fif_data(data_dir_c)
+
+
+# data_dir_c = r"D:\suli\thesis\par2024_two_cmd_c_global\par2024_two_cmd_c_global"
+# X_train_c, X_test_c, Y_train_c, Y_test_c = load_fif_data(data_dir_c, event_id)
+
+event_id = {
+    'Stimulus/13': 0,  # Both Legs
+    'Stimulus/14': 1  # Word
+}
 
 data_dir_b = r"D:\suli\thesis\par2024_two_cmd_b_global\par2024_two_cmd_b_global"
-X_train_b, X_test_b, Y_train_b, Y_test_b = load_fif_data(data_dir_b)
+X_train_b, X_test_b, Y_train_b, Y_test_b = load_fif_data(data_dir_b, event_id)
 
-data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
-X_train_inv, X_test_inv, Y_train_inv, Y_test_inv = load_fif_data(data_dir_inv)
+# data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
+# X_train_inv, X_test_inv, Y_train_inv, Y_test_inv = load_fif_data(data_dir_inv)
 
 # Info about the number of events loaded
 '''
@@ -48,7 +56,7 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 '''
 
 # Train the model on global b
-'''
+
 # Define model
 model_b = EEGTransformerModel()
 train_model(model_b, X_train_b, Y_train_b, epochs=20)
@@ -58,14 +66,13 @@ train_model(model_b, X_train_b, Y_train_b, epochs=20)
 #validate
 print("Validate model b on global b")
 validate_model(model_b, X_test_b, Y_test_b)
-print("Validate model b on global c")
-validate_model(model_b, X_test_c, Y_test_c)
-'''
+
+
 
 # Pretrain the model on inv, transfer on global b
 '''
 model_inv = EEGTransformerModel()
-train_model(model_inv, X_train_inv, Y_train_Inv, epochs=10)
+train_model(model_inv, X_train_inv, Y_train_inv, epochs=10)
 torch.save(model_inv.state_dict(), "model_pretrained_on_inv.pth")
 
 
@@ -88,6 +95,23 @@ validate_model(model_inv, X_test_c, Y_test_c)
 '''
 
 # Pretrain on all 3, then transfer on global b
-X_train_all = np.concatenate((X_train_c, X_train_b, X_train_inv), axis=0)
+'''
+X_train_all = np.concatenate([X_train_c, X_train_b, X_train_inv], axis=0)
 Y_train_all = torch.cat((Y_train_c, Y_train_b, Y_train_inv), dim=0)
 
+model_all = EEGTransformerModel()
+train_model(model_all, X_train_all, Y_train_all, epochs=10)
+torch.save(model_all.state_dict(), "model_pretrained_on_all.pth")
+
+
+# Freeze all layers
+for param in model_all.parameters():
+    param.requires_grad = False
+for param in model_all.fc.parameters():
+    param.requires_grad = True
+
+optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model_all.parameters()), lr=0.0005)
+model = train_model(model_all, X_train_b, Y_train_b, epochs=5, optimizer=optimizer)
+
+validate_model(model, X_test_b, Y_test_b)
+'''
