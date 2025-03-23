@@ -1,4 +1,4 @@
-import model
+#import model
 #import data_processing
 import torch
 import torch.nn as nn
@@ -6,24 +6,36 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
+from sklearn.metrics import balanced_accuracy_score
 
 
 
 # Training function
-def train_model(model, train_loader, optimizer, criterion, device, epochs=10):
+def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.001):
     """
     Train the model using the training dataset.
 
     Args:
         model: The model to train.
-        train_loader: DataLoader for the training dataset.
-        optimizer: Optimizer for updating the model weights.
-        criterion: Loss function to compute the training loss.
-        device: Device to train on ('cuda' or 'cpu').
+        X_train, Y_train: Training dataset and its labels.
         epochs: Number of training epochs.
     """
+
+    # Set device to GPU if available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     model.to(device)
     model.train()  # Set model to training mode
+
+    criterion = nn.CrossEntropyLoss()
+
+    if optimizer is None:
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    # Prepare data
+    train_dataset = TensorDataset(torch.from_numpy(X_train).float(), Y_train)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
     for epoch in range(epochs):
         total_loss = 0.0
@@ -44,9 +56,11 @@ def train_model(model, train_loader, optimizer, criterion, device, epochs=10):
         avg_loss = total_loss / len(train_loader)
         print(f"Epoch [{epoch + 1}/{epochs}], Loss: {avg_loss:.4f}")
 
+    return model
+
 
 # Validation function
-def validate_model(model, val_loader, criterion, device):
+def validate_model(model, X_test, Y_test):
     """
     Validate the model using the validation dataset.
 
@@ -56,29 +70,40 @@ def validate_model(model, val_loader, criterion, device):
         criterion: Loss function to compute the validation loss.
         device: Device to validate on ('cuda' or 'cpu').
     """
+    # Set device to GPU if available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     model.to(device)
     model.eval()  # Set model to evaluation mode
 
-    total_loss = 0.0
-    correct = 0
-    total = 0
+    criterion = nn.CrossEntropyLoss()
 
-    with torch.no_grad():  # Disable gradient computation
+    # Convert and load test data
+    val_dataset = TensorDataset(torch.from_numpy(X_test).float(), Y_test)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+
+    total_loss = 0.0
+    all_preds = []
+    all_targets = []
+
+    with torch.no_grad():
         for batch_X, batch_Y in val_loader:
             batch_X, batch_Y = batch_X.to(device), batch_Y.to(device)
 
-            # Forward pass
             outputs = model(batch_X)
             loss = criterion(outputs, batch_Y)
             total_loss += loss.item()
 
-            # Compute accuracy
             _, predicted = torch.max(outputs, dim=1)
-            correct += (predicted == batch_Y).sum().item()
-            total += batch_Y.size(0)
+
+            all_preds.extend(predicted.cpu().numpy())
+            all_targets.extend(batch_Y.cpu().numpy())
 
     avg_loss = total_loss / len(val_loader)
-    accuracy = correct / total
-    print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+    accuracy = sum([p == t for p, t in zip(all_preds, all_targets)]) / len(all_preds)
+    balanced_acc = balanced_accuracy_score(all_targets, all_preds)
 
-    return avg_loss, accuracy
+    print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}, Balanced Accuracy: {balanced_acc:.4f}")
+
+    return avg_loss, accuracy, balanced_acc

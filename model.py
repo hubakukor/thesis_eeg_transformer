@@ -9,7 +9,7 @@ import torch.optim as optim
 
 # Define the model architecture
 class EEGTransformerModel(nn.Module):
-    def __init__(self, input_channels=64, seq_len=480, d_model=128, nhead=4, num_encoder_layers=2, num_classes=5):
+    def __init__(self, input_channels=63, seq_len=1501, d_model=128, nhead=4, num_encoder_layers=2, num_classes=2):
         """
         Args:
             input_channels (int): Number of input channels (EEG channels).
@@ -67,26 +67,3 @@ class EEGTransformerModel(nn.Module):
         x = self.fc(x)  # [batch_size, num_classes]
 
         return x
-
-# Define model, criterion, optimizer
-model = EEGTransformerModel(
-    input_channels=64,
-    seq_len=480,
-    d_model=128,
-    nhead=4,
-    num_encoder_layers=2,
-    num_classes=5)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-#prepare data for training and validation
-train_dataset = TensorDataset(torch.from_numpy(X_train).float(), Y_train)
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-
-val_dataset = TensorDataset(torch.from_numpy(X_test).float(), Y_test)
-val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-
-
-# Set device to GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")

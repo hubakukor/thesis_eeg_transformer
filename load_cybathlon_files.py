@@ -17,7 +17,7 @@ def load_fif_data(data_dir):
     X = []  # To store EEG data
     Y = []  # To store labels
 
-    # Read data from dataset 1
+    # Read data
     for subject in subject_folders:
         subject_path = os.path.join(data_dir, subject)
 
@@ -32,6 +32,8 @@ def load_fif_data(data_dir):
 
             # Read the EDF file
             raw = mne.io.read_raw_fif(fif_path,preload=False)
+            #print('Annotations: ',raw.annotations)
+            #print('Annotation duration: ',raw.annotations.duration)
 
             # Extract events and event_id from annotations
             events, event_id = mne.events_from_annotations(raw)
@@ -56,6 +58,7 @@ def load_fif_data(data_dir):
             X.append(epoch_data)
             Y.append(epochs.events[:, -1])
 
+            print(f"Number of channels: {len(raw.ch_names)}")
             '''
             #print some general info about the data
             print(raw.info)
@@ -78,7 +81,7 @@ def load_fif_data(data_dir):
     # Split the data into training and testing sets (80% training, 20% testing)
     X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
 
-    # One-Hot Encode the Labels (T0, T1, T2, T3, T4)
+    # One-Hot Encode the Labels
     encoder = OneHotEncoder(sparse_output=False, categories='auto')
     Y_train = encoder.fit_transform(Y_train.reshape(-1, 1))
     Y_test = encoder.transform(Y_test.reshape(-1, 1))
