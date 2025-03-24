@@ -81,7 +81,7 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 #Train on c
 #Define model
 model_c = EEGTransformerModel()
-train_model(model_c, X_train_c, Y_train_c, epochs=50, lr=0.01)
+train_model(model_c, X_train_c, Y_train_c, epochs=20, lr=0.01)
 #torch.save(model_b.state_dict(), "model_trained_on_global_b.pth")
 
 print("Validate model c on model c")

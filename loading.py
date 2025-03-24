@@ -31,9 +31,12 @@ def load_fif_data(data_dir, event_id):
             print(f"Loading {fif_path}...")
 
             # Read the FIF file
-            raw = mne.io.read_raw_fif(fif_path,preload=False)
+            raw = mne.io.read_raw_fif(fif_path,preload=True)
             #print('Annotations: ',raw.annotations)
             #print('Annotation duration: ',raw.annotations.duration)
+
+            #bandpass filter
+            raw.filter(l_freq=5, h_freq=30)
 
             # Extract events and event_id from annotations
             events, extracted_event_id = mne.events_from_annotations(raw)
