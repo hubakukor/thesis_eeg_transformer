@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,11 +5,14 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
 from sklearn.metrics import balanced_accuracy_score
+from collections import Counter
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
 
 
 
 # Training function
-def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.001):
+def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0001):
     """
     Train the model using the training dataset.
 
@@ -27,14 +29,24 @@ def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.001):
     model.to(device)
     model.train()  # Set model to training mode
 
-    criterion = nn.CrossEntropyLoss()
+    # criterion = nn.CrossEntropyLoss()
+
+    #use weighted loss
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=np.array([0, 1]),
+        y=Y_train.numpy()
+    )
+    class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
+
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     if optimizer is None:
         optimizer = optim.Adam(model.parameters(), lr=lr)
 
     # Prepare data
     train_dataset = TensorDataset(torch.from_numpy(X_train).float(), Y_train)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
 
     for epoch in range(epochs):
         total_loss = 0.0
@@ -104,5 +116,10 @@ def validate_model(model, X_test, Y_test):
     balanced_acc = balanced_accuracy_score(all_targets, all_preds)
 
     print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}, Balanced Accuracy: {balanced_acc:.4f}")
+    pred_counts = Counter(all_preds)
+    true_counts = Counter(all_targets)
+
+    print(f"\n True class distribution: {true_counts}")
+    print(f" Predicted class distribution: {pred_counts}")
 
     return avg_loss, accuracy, balanced_acc

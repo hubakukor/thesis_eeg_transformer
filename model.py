@@ -39,7 +39,7 @@ class EEGTransformerModel(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_encoder_layers)
 
         # Final classifier
-        self.fc = nn.Linear(seq_len * d_model, num_classes)
+        self.fc = nn.Linear(d_model, num_classes) #lowered from seq_length * d_model to d_model
 
     def forward(self, x):
         """
@@ -62,8 +62,15 @@ class EEGTransformerModel(nn.Module):
         x = self.transformer(x)  # [seq_len, batch_size, d_model]
 
         # Flatten the sequence and classify
-        x = x.permute(1, 0, 2).contiguous()  # [batch_size, seq_len, d_model]
-        x = x.view(x.size(0), -1)  # Flatten to [batch_size, seq_len * d_model]
-        x = self.fc(x)  # [batch_size, num_classes]
+        # x = x.permute(1, 0, 2).contiguous()  # [batch_size, seq_len, d_model]
+        # x = x.mean(dim=1)  # Flatten to [batch_size, seq_len * d_model]
+        # x = self.fc(x)  # [batch_size, num_classes]
+
+        # Permute: [batch, seq_len, d_model]
+        x = x.permute(1, 0, 2)
+        # Mean pooling over time (seq_len)
+        x = x.mean(dim=1)  # → [batch, d_model]
+        # Final classification
+        x = self.fc(x)  # → [batch, num_classes]
 
         return x

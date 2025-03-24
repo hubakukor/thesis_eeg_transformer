@@ -36,25 +36,31 @@ def load_fif_data(data_dir, event_id):
             #print('Annotation duration: ',raw.annotations.duration)
 
             # Extract events and event_id from annotations
-            events, _ = mne.events_from_annotations(raw)
+            events, extracted_event_id = mne.events_from_annotations(raw)
 
-            event_id = event_id
+            # Map event names (e.g. 'Stimulus/13') to extracted IDs
+            filtered_event_id = {k: extracted_event_id[k] for k in event_id.keys() if k in extracted_event_id}
+
 
             # Filter only relevant event types
-            filtered_events = [e for e in events if e[-1] in event_id.values()]
+            filtered_events = [e for e in events if e[-1] in filtered_event_id.values()]
             events = np.array(filtered_events)
             if len(events) == 0:
                 print(f"No matching events found in {fif_file}, skipping.")
                 continue
             # Create epochs with modified events and filtered_event_id
-            epochs = mne.Epochs(raw, events, event_id, tmin=0, tmax=3, baseline=None, preload=True)
+            epochs = mne.Epochs(raw, events, filtered_event_id, tmin=0, tmax=3, baseline=None, preload=True)
             #print(f"Used Annotations descriptions in epochs: {epochs.event_id}")
 
             # Process the EEG data as before
             epoch_data = epochs.get_data()  # EEG data (shape: n_epochs, n_channels, n_times)
 
+            # Map back to 0/1 using your event_id dictionary
+            label_map = {v: event_id[k] for k, v in filtered_event_id.items()}
+            Y.append(np.vectorize(label_map.get)(epochs.events[:, -1]))
+
             X.append(epoch_data)
-            Y.append(epochs.events[:, -1])
+
 
             print(f"Number of channels: {len(raw.ch_names)}")
             '''
@@ -87,6 +93,10 @@ def load_fif_data(data_dir, event_id):
     # Convert one-hot-encoded labels to integer class labels
     Y_train = torch.argmax(torch.tensor(Y_train, dtype=torch.float32), axis=1).long()
     Y_test = torch.argmax(torch.tensor(Y_test, dtype=torch.float32), axis=1).long()
+
+    #check label distribution
+    unique, counts = np.unique(Y, return_counts=True)
+    print("Final label distribution (all data):", dict(zip(unique, counts)))
 
     return X_train, X_test, Y_train, Y_test
 
