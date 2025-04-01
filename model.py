@@ -24,8 +24,10 @@ class EEGTransformerModel(nn.Module):
         # CNN for local feature extraction
         self.conv = nn.Sequential(
             nn.Conv1d(input_channels, 64, kernel_size=3, padding=1),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
             nn.ReLU()
         )
 

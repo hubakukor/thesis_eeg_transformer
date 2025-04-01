@@ -12,7 +12,7 @@ import numpy as np
 
 
 # Training function
-def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0001):
+def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0005):
     """
     Train the model using the training dataset.
 
@@ -29,17 +29,17 @@ def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0001):
     model.to(device)
     model.train()  # Set model to training mode
 
-    # criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()
 
-    #use weighted loss
-    class_weights = compute_class_weight(
-        class_weight='balanced',
-        classes=np.array([0, 1]),
-        y=Y_train.numpy()
-    )
-    class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
-
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    # #use weighted loss
+    # class_weights = compute_class_weight(
+    #     class_weight='balanced',
+    #     classes=np.array([0, 1]),
+    #     y=Y_train.numpy()
+    # )
+    # class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
+    #
+    # criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     if optimizer is None:
         optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -50,6 +50,9 @@ def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0001):
 
     for epoch in range(epochs):
         total_loss = 0.0
+        correct = 0
+        total = 0
+
         for batch_X, batch_Y in train_loader:
             batch_X, batch_Y = batch_X.to(device), batch_Y.to(device)
 
@@ -64,8 +67,14 @@ def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0001):
 
             total_loss += loss.item()
 
+            #track training accuracy
+            _, predicted = torch.max(outputs, dim=1)
+            correct += predicted.eq(batch_Y).sum().item()
+            total += batch_Y.size(0)
+
         avg_loss = total_loss / len(train_loader)
-        print(f"Epoch [{epoch + 1}/{epochs}], Loss: {avg_loss:.4f}")
+        accuracy = correct / total
+        print(f"Epoch [{epoch + 1}/{epochs}], Loss: {avg_loss:.4f} Accuracy: {accuracy:.4f}")
 
     return model
 
