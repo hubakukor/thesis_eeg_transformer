@@ -12,32 +12,45 @@ from collections import Counter
 
 #load data from files
 
-#events in global c
-event_id = {
-    'Stimulus/13': 0,  # both legs
-    'Stimulus/15': 1  # Subtract
-}
+#data directories
 data_dir_c = r"D:\suli\thesis\par2024_two_cmd_c_global\par2024_two_cmd_c_global"
-X_train_c, X_test_c, Y_train_c, Y_test_c = load_fif_data(data_dir_c, event_id)
+data_dir_b = r"D:\suli\thesis\par2024_two_cmd_b_global\par2024_two_cmd_b_global"
+data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
 
-#events in global b
-# event_id = {
+#event libraries:
+
+# #global c
+# event_id_c = {
+#     'Stimulus/13': 0,  # both legs
+#     'Stimulus/15': 1  # Subtract
+# }
+
+# #global b
+# event_id_b = {
 #     'Stimulus/12': 0,  # Right hand
 #     'Stimulus/15': 1  # Subtract
 # }
 #
-# data_dir_b = r"D:\suli\thesis\par2024_two_cmd_b_global\par2024_two_cmd_b_global"
-# X_train_b, X_test_b, Y_train_b, Y_test_b = load_fif_data(data_dir_b, event_id)
+#inv
+event_id_inv = {
+    'Stimulus/12': 0,  # Right hand
+    'Stimulus/13': 1,  # both legs
+    'Stimulus/15': 2  # Subtract
+}
 
-# # events in inv
-# event_id = {
-#     'Stimulus/12': 0,  # Right hand
-#     'Stimulus/13': 1,  # both legs
-#     'Stimulus/15': 2  # Subtract
-# }
+#match the labels for the classes for training on the combined datasets
+event_id_b = {k: v for k, v in event_id_inv.items() if k in ['Stimulus/12', 'Stimulus/15']}
+event_id_c = {k: v for k, v in event_id_inv.items() if k in ['Stimulus/13', 'Stimulus/15']}
 
-data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
-X_train_inv, X_test_inv, Y_train_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id)
+
+#load data into train and test sets
+X_train_c, X_test_c, Y_train_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
+
+# X_train_b, X_test_b, Y_train_b, Y_test_b = load_fif_data(data_dir_b, event_id_b)
+X_train_b, _, Y_train_b, _ = load_fif_data(data_dir_b, event_id_b)
+
+# X_train_inv, X_test_inv, Y_train_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_inv)
+X_train_inv, _, Y_train_inv, _ = load_fif_data(data_dir_inv, event_id_inv)
 
 # Info about the number of events loaded
 '''
@@ -99,56 +112,77 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 
 #pretrain on inv
 
-model_inv = EEGTransformerModel()
-train_model(model_inv, X_train_inv, Y_train_inv, epochs=30, lr=0.0005)
-torch.save(model_inv.state_dict(), "model_pretrained_on_inv.pth")
-
-
-# Freeze everything
-for param in model_inv.parameters():
-    param.requires_grad = False
-
-# Unfreeze and reset classifier
-for param in model_inv.fc.parameters():
-    param.requires_grad = True
-model_inv.fc.reset_parameters()
-
-# unfreeze and reset projection layer
-for param in model_inv.proj.parameters():
-    param.requires_grad = True
-model_inv.proj.reset_parameters()
-
-# Create optimizer only for unfrozen params, lower learning rate
-optimizer = optim.Adam(filter(lambda p: p.requires_grad, model_inv.parameters()), lr=0.0001)
-
-# Train
-train_model(model_inv, X_train_c, Y_train_c, epochs=10, optimizer=optimizer)
-torch.save(model_inv.state_dict(), "model_transfer_inv_to_c.pth")
-
+# model_inv = EEGTransformerModel()
+# train_model(model_inv, X_train_inv, Y_train_inv, epochs=30, lr=0.0005)
+# torch.save(model_inv.state_dict(), "model_pretrained_on_inv.pth")
+#
+#
+# # Freeze everything
+# for param in model_inv.parameters():
+#     param.requires_grad = False
+#
+# # Unfreeze and reset classifier
+# for param in model_inv.fc.parameters():
+#     param.requires_grad = True
+# model_inv.fc.reset_parameters()
+#
+# # unfreeze and reset projection layer
+# for param in model_inv.proj.parameters():
+#     param.requires_grad = True
+# model_inv.proj.reset_parameters()
+#
+# # Unfreeze the last transformer layer
+# for param in model_inv.transformer.layers[-1].parameters():
+#     param.requires_grad = True
+#
+# # Create optimizer only for unfrozen params, lower learning rate
+# optimizer = optim.Adam(filter(lambda p: p.requires_grad, model_inv.parameters()), lr=0.0001)
+#
+# # Train
+# train_model(model_inv, X_train_b, Y_train_b, epochs=20, optimizer=optimizer)
+# torch.save(model_inv.state_dict(), "model_transfer_inv_to_b.pth")
+#
 # print("Validate model inv on global b")
 # validate_model(model_inv, X_test_b, Y_test_b)
-print("Validate model inv on global c")
-validate_model(model_inv, X_test_c, Y_test_c)
+# print("Validate model inv on global c")
+# validate_model(model_inv, X_test_c, Y_test_c)
 
 
-# Pretrain on all 3, then transfer on global b
-'''
+# Pretrain on all 3, then transfer on global c
+
 X_train_all = np.concatenate([X_train_c, X_train_b, X_train_inv], axis=0)
 Y_train_all = torch.cat((Y_train_c, Y_train_b, Y_train_inv), dim=0)
 
-model_all = EEGTransformerModel()
-train_model(model_all, X_train_all, Y_train_all, epochs=10)
+print("Pretraining class counts:", torch.unique(Y_train_all, return_counts=True))
+
+model_all = EEGTransformerModel(num_classes=3)
+train_model(model_all, X_train_all, Y_train_all, epochs=40, lr=0.0005)
 torch.save(model_all.state_dict(), "model_pretrained_on_all.pth")
 
+print("Finished pretraining on all datasets, starting transfer learning on c")
+print("Transfer tuning on global c class counts:", torch.unique(Y_train_c, return_counts=True))
 
-# Freeze all layers
-for param in model_all.parameters():
+model_transfer = EEGTransformerModel(num_classes=2)
+state_dict = torch.load("model_pretrained_on_all.pth")
+
+# Remove fc layer weights since dimensions changed
+del state_dict["fc.weight"]
+del state_dict["fc.bias"]
+model_transfer.load_state_dict(state_dict, strict=False)
+
+#freeze everything but fc and projection layer
+for param in model_transfer.parameters():
     param.requires_grad = False
-for param in model_all.fc.parameters():
+for param in model_transfer.proj.parameters():
+    param.requires_grad = True
+for param in model_transfer.fc.parameters():
+    param.requires_grad = True
+# Unfreeze the last transformer layer
+for param in model_transfer.transformer.layers[-1].parameters():
     param.requires_grad = True
 
-optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model_all.parameters()), lr=0.0005)
-model = train_model(model_all, X_train_b, Y_train_b, epochs=5, optimizer=optimizer)
+#tune on global c
+optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model_transfer.parameters()), lr=0.0001)
+train_model(model_transfer, X_train_c, Y_train_c, epochs=20, optimizer=optimizer)
 
-validate_model(model, X_test_b, Y_test_b)
-'''
+validate_model(model_transfer, X_test_c, Y_test_c)

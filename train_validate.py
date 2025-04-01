@@ -8,6 +8,8 @@ from sklearn.metrics import balanced_accuracy_score
 from collections import Counter
 from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 
 
@@ -128,7 +130,16 @@ def validate_model(model, X_test, Y_test):
     pred_counts = Counter(all_preds)
     true_counts = Counter(all_targets)
 
+    #label distribution
     print(f"\n True class distribution: {true_counts}")
     print(f" Predicted class distribution: {pred_counts}")
+
+    #confusion matrix
+    # Confusion matrix
+    cm = confusion_matrix(all_targets, all_preds)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+    disp.plot(cmap='Blues')
+    plt.title("Confusion Matrix")
+    plt.show()
 
     return avg_loss, accuracy, balanced_acc
