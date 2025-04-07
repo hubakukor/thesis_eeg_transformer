@@ -25,11 +25,11 @@ data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
 #     'Stimulus/15': 1  # Subtract
 # }
 
-# #global b
-# event_id_b = {
-#     'Stimulus/12': 0,  # Right hand
-#     'Stimulus/15': 1  # Subtract
-# }
+#global b
+event_id_b = {
+    'Stimulus/12': 0,  # Right hand
+    'Stimulus/15': 1  # Subtract
+}
 #
 #inv
 # event_id_inv = {
@@ -40,16 +40,16 @@ data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
 #
 # #match the labels for the classes for training on the combined datasets
 # event_id_b = {k: v for k, v in event_id_inv.items() if k in ['Stimulus/12', 'Stimulus/15']}
-event_id_c = {k: v for k, v in event_id_inv.items() if k in ['Stimulus/13', 'Stimulus/15']}
+# event_id_c = {k: v for k, v in event_id_inv.items() if k in ['Stimulus/13', 'Stimulus/15']}
 
 
 # #load data into train and test sets
-X_train_c, X_test_c, Y_train_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
+# X_train_c, X_test_c, Y_train_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
 
-# X_train_b, X_test_b, Y_train_b, Y_test_b = load_fif_data(data_dir_b, event_id_b)
+X_train_b, X_test_b, Y_train_b, Y_test_b = load_fif_data(data_dir_b, event_id_b)
 
 
-X_train_inv, X_test_inv, Y_train_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_inv)
+X_train_inv, X_test_inv, Y_train_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_b)
 
 # Info about the number of events loaded
 '''
@@ -96,40 +96,40 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 # print("Validate model inv on dataset inv")
 # validate_model(model_inv, X_test_inv, Y_test_inv)
 
-#pretrain on inv
+# pretrain on inv
 
-# model_inv = EEGTransformerModel()
-# train_model(model_inv, X_train_inv, Y_train_inv, epochs=30, lr=0.0005)
+model_inv = EEGTransformerModel(embedding_type='sinusoidal')
+train_model(model_inv, X_train_inv, Y_train_inv, epochs=20, lr=0.0005)
 # torch.save(model_inv.state_dict(), "model_pretrained_on_inv.pth")
-#
-#
-# # Freeze everything
-# for param in model_inv.parameters():
-#     param.requires_grad = False
-#
-# # Unfreeze and reset classifier
-# for param in model_inv.fc.parameters():
-#     param.requires_grad = True
-# model_inv.fc.reset_parameters()
-#
-# # unfreeze and reset projection layer
-# for param in model_inv.proj.parameters():
-#     param.requires_grad = True
-# model_inv.proj.reset_parameters()
-#
-# # Unfreeze the last transformer layer
-# for param in model_inv.transformer.layers[-1].parameters():
-#     param.requires_grad = True
-#
-# # Create optimizer only for unfrozen params, lower learning rate
-# optimizer = optim.Adam(filter(lambda p: p.requires_grad, model_inv.parameters()), lr=0.0001)
-#
-# # Train
-# train_model(model_inv, X_train_b, Y_train_b, epochs=20, optimizer=optimizer)
+
+
+# Freeze everything
+for param in model_inv.parameters():
+    param.requires_grad = False
+
+# Unfreeze and reset classifier
+for param in model_inv.fc.parameters():
+    param.requires_grad = True
+model_inv.fc.reset_parameters()
+
+# unfreeze and reset projection layer
+for param in model_inv.proj.parameters():
+    param.requires_grad = True
+model_inv.proj.reset_parameters()
+
+# Unfreeze the last transformer layer
+for param in model_inv.transformer.layers[-1].parameters():
+    param.requires_grad = True
+
+# Create optimizer only for unfrozen params, lower learning rate
+optimizer = optim.Adam(filter(lambda p: p.requires_grad, model_inv.parameters()), lr=0.0001)
+
+# Train
+train_model(model_inv, X_train_b, Y_train_b, epochs=10, optimizer=optimizer)
 # torch.save(model_inv.state_dict(), "model_transfer_inv_to_b.pth")
-#
-# print("Validate model inv on global b")
-# validate_model(model_inv, X_test_b, Y_test_b)
+
+print("Validate model inv on global b")
+validate_model(model_inv, X_test_b, Y_test_b)
 # print("Validate model inv on global c")
 # validate_model(model_inv, X_test_c, Y_test_c)
 
