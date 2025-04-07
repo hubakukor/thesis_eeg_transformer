@@ -5,11 +5,12 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
 #import data_processing
+from positional_embedding import SinusoidalPositionalEmbedding
 
 
 # Define the model architecture
 class EEGTransformerModel(nn.Module):
-    def __init__(self, input_channels=63, seq_len=1501, d_model=128, nhead=4, num_encoder_layers=2, num_classes=2):
+    def __init__(self, input_channels=63, seq_len=1501, d_model=128, nhead=4, num_encoder_layers=2, num_classes=2, embedding_type='none'):
         """
         Args:
             input_channels (int): Number of input channels (EEG channels).
@@ -33,6 +34,14 @@ class EEGTransformerModel(nn.Module):
 
         # Linear projection to match Transformer input size
         self.proj = nn.Linear(128, d_model)
+
+        # Add positional embedding
+        # Choose embedding type
+        if embedding_type == 'none':
+            self.positional_embedding = lambda x: x  # no embedding
+        elif embedding_type == 'sinusoidal':
+            self.positional_embedding = SinusoidalPositionalEmbedding(seq_len, d_model)
+
 
         # TransformerEncoder block for temporal dependencies
         encoder_layer = nn.TransformerEncoderLayer(
@@ -59,6 +68,9 @@ class EEGTransformerModel(nn.Module):
 
         # Linear projection to d_model
         x = self.proj(x)  # [seq_len, batch_size, d_model]
+
+        # Add positional embedding
+        x = self.positional_embedding(x)
 
         # TransformerEncoder
         x = self.transformer(x)  # [seq_len, batch_size, d_model]

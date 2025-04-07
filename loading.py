@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
 import torch
 
-#normalize the eeg signal betwen -1 and 1
+#normalize the eeg signal between -1 and 1
 def normalize_epoch_minmax(epoch):
     min_vals = epoch.min(axis=1, keepdims=True)
     max_vals = epoch.max(axis=1, keepdims=True)
@@ -19,7 +19,6 @@ def load_fif_data(data_dir, event_id):
     subject_folders = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
 
     # Limit to the first folder for testing
-    #delete this later
     #subject_folders = [subject_folders[0]]
 
     # Initialize empty lists to store the data and labels
