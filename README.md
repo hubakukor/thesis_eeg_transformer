@@ -16,4 +16,4 @@ Transformer-based neural network for EEG motor imagery classification.
 
 
 ## Note
-Work in progress.
+This project is a work in progress as part of my thesis.
