@@ -14,14 +14,18 @@ import matplotlib.pyplot as plt
 
 
 # Training function
-def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0005):
+def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None, lr=0.0005, patience=5):
     """
     Train the model using the training dataset.
 
     Args:
         model: The model to train.
         X_train, Y_train: Training dataset and its labels.
+        X_val, Y_val: Validation dataset and its labels.
         epochs: Number of training epochs.
+        optimizer: Optimizer to use for training.
+        lr: Learning rate for the optimizer.
+        patience: Number of epochs without improvement before early stopping.
     """
 
     # Set device to GPU if available
@@ -50,7 +54,14 @@ def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0005):
     train_dataset = TensorDataset(torch.from_numpy(X_train).float(), Y_train)
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
 
+    val_dataset = TensorDataset(torch.from_numpy(X_val).float(), Y_val)
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+
+    best_val_loss = float('inf')
+    epochs_without_improvement = 0
+
     for epoch in range(epochs):
+        model.train()
         total_loss = 0.0
         correct = 0
         total = 0
@@ -78,6 +89,42 @@ def train_model(model, X_train, Y_train, epochs=10, optimizer=None, lr=0.0005):
         accuracy = correct / total
         print(f"Epoch [{epoch + 1}/{epochs}], Loss: {avg_loss:.4f} Accuracy: {accuracy:.4f}")
 
+        # Validate
+        model.eval()
+        val_loss = 0.0
+        val_preds = []
+        val_targets = []
+
+        with torch.no_grad():
+            for val_X, val_Y in val_loader:
+                val_X, val_Y = val_X.to(device), val_Y.to(device)
+                val_outputs = model(val_X)
+                val_loss += criterion(val_outputs, val_Y).item()
+
+                _, predicted = torch.max(val_outputs, dim=1)
+                val_preds.extend(predicted.cpu().numpy())
+                val_targets.extend(val_Y.cpu().numpy())
+
+        val_loss /= len(val_loader)
+        val_acc = np.mean(np.array(val_preds) == np.array(val_targets))
+        val_bal_acc = balanced_accuracy_score(val_targets, val_preds)
+
+        print(
+            f"Epoch [{epoch + 1}/{epochs}], Train Loss: {avg_loss:.4f}, Train Accuracy: {accuracy:.4f}, "
+            f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}, Balanced Accuracy: {val_bal_acc:.4f}")
+
+        # Early stopping logic
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_without_improvement = 0
+            best_model_state = model.state_dict()
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= patience:
+                print(f"Early stopping triggered at epoch {epoch + 1}")
+                break
+
+    model.load_state_dict(best_model_state) # load best model
     return model
 
 
@@ -126,7 +173,7 @@ def validate_model(model, X_test, Y_test):
     accuracy = sum([p == t for p, t in zip(all_preds, all_targets)]) / len(all_preds)
     balanced_acc = balanced_accuracy_score(all_targets, all_preds)
 
-    print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}, Balanced Accuracy: {balanced_acc:.4f}")
+    print(f"Test Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}, Balanced Accuracy: {balanced_acc:.4f}")
     pred_counts = Counter(all_preds)
     true_counts = Counter(all_targets)
 

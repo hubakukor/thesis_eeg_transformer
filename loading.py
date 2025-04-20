@@ -97,21 +97,25 @@ def load_fif_data(data_dir, event_id):
     X = np.concatenate(X, axis=0)
     Y = np.concatenate(Y, axis=0)
 
-    # Split the data into training and testing sets (80% training, 20% testing)
-    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+    # First split into train, validation and test sets (0.64, 0.16, 0.20)
+    X_temp, X_test, Y_temp, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+
+    X_train, X_val, Y_train, Y_val = train_test_split(X_temp, Y_temp, test_size=0.2, random_state=42)
 
     # One-Hot Encode the Labels
     encoder = OneHotEncoder(sparse_output=False)
     Y_train = encoder.fit_transform(Y_train.reshape(-1, 1))
     Y_test = encoder.transform(Y_test.reshape(-1, 1))
+    Y_val = encoder.transform(Y_val.reshape(-1, 1))
 
     # Convert one-hot-encoded labels to integer class labels
     Y_train = torch.argmax(torch.tensor(Y_train, dtype=torch.float32), axis=1).long()
     Y_test = torch.argmax(torch.tensor(Y_test, dtype=torch.float32), axis=1).long()
+    Y_val = torch.argmax(torch.tensor(Y_val, dtype=torch.float32), axis=1).long()
 
     #check label distribution
     unique, counts = np.unique(Y, return_counts=True)
     print("Final label distribution (all data):", dict(zip(unique, counts)))
 
-    return X_train, X_test, Y_train, Y_test
+    return X_train, X_val, X_test, Y_train, Y_val, Y_test
 
