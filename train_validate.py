@@ -87,7 +87,6 @@ def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None
 
         avg_loss = total_loss / len(train_loader)
         accuracy = correct / total
-        print(f"Epoch [{epoch + 1}/{epochs}], Loss: {avg_loss:.4f} Accuracy: {accuracy:.4f}")
 
         # Validate
         model.eval()

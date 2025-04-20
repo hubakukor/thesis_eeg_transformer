@@ -69,7 +69,7 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 
 # Train the model on global b
 # Define model
-model_b = EEGTransformerModel(embedding_type='sinusoidal')
+model_b = EEGTransformerModel(embedding_type='none')
 train_model(model_b, X_train_b, Y_train_b, X_val_b, Y_val_b, lr=0.0005)
 #torch.save(model_b.state_dict(), "model_trained_on_global_b.pth")
 

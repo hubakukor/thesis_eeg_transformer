@@ -24,11 +24,11 @@ class EEGTransformerModel(nn.Module):
 
         # CNN for local feature extraction
         self.conv = nn.Sequential(
-            nn.Conv1d(input_channels, 64, kernel_size=3, padding=1),
-            nn.BatchNorm1d(64),
+            nn.Conv2d(in_channels=1, out_channels=64, kernel_size=(3, 3), padding=(1, 1)),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv1d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm1d(128),
+            nn.Conv2d(64, 128, kernel_size=(3, 3), padding=(1, 1)),
+            nn.BatchNorm2d(128),
             nn.ReLU()
         )
 
@@ -61,10 +61,14 @@ class EEGTransformerModel(nn.Module):
             torch.Tensor: Output logits of shape [batch_size, num_classes].
         """
         # CNN for feature extraction
-        x = self.conv(x)  # [batch_size, 128, seq_len]
+        x = x.unsqueeze(1)  # → [batch, 1, 63, 1501]
+        x = self.conv(x)  # [batch, 128, 63, seq_len]
+
 
         # Permute to match transformer input (seq_len, batch_size, d_model)
-        x = x.permute(2, 0, 1)  # [seq_len, batch_size, 128]
+        x = x.permute(0, 2, 3, 1)  # [batch, 63, 1501, 128]
+        x = x.mean(dim=2)  # [batch, 63, 128]
+        x = x.permute(1, 0, 2)  # [seq_len=63, batch, d_model=128]
 
         # Linear projection to d_model
         x = self.proj(x)  # [seq_len, batch_size, d_model]
