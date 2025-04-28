@@ -10,11 +10,44 @@ from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
+from imblearn.over_sampling import BorderlineSMOTE
+
+#create augmented data
+def augment_with_noise(X, Y, ratio=0.5, noise_level=0.01):
+    """
+    Augments data X, Y by adding Gaussian noise to a fraction (ratio) of the data.
+
+    Parameters:
+        X (numpy array): Training data, shape (N, C, T) or (N, features)
+        Y (numpy array): Labels, shape (N,)
+        ratio (float): How many extra samples to create (e.g., 0.5 = 50% more)
+        noise_level (float): Standard deviation of Gaussian noise relative to data range
+
+    Returns:
+        Augmented X, Y
+    """
+    n_samples = int(X.shape[0] * ratio)
+
+    # Randomly select samples to copy
+    idx = np.random.choice(X.shape[0], n_samples, replace=True)
+    X_selected = X[idx]
+    Y_selected = Y[idx]
+
+    # Add Gaussian noise
+    noise = np.random.normal(0, noise_level * np.std(X_selected), X_selected.shape)
+    X_noisy = X_selected + noise
+
+    # Concatenate original and augmented data
+    X_augmented = np.concatenate([X, X_noisy], axis=0)
+    Y_augmented = np.concatenate([Y, Y_selected], axis=0)
+
+    return X_augmented, Y_augmented
 
 
 
 # Training function
-def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None, lr=0.0005, patience=5):
+def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None,
+                lr=0.0005, patience=5, oversampling=0, noise_augmentation=0):
     """
     Train the model using the training dataset.
 
@@ -26,6 +59,7 @@ def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None
         optimizer: Optimizer to use for training.
         lr: Learning rate for the optimizer.
         patience: Number of epochs without improvement before early stopping.
+        oversampling: Ratio of oversampling for the training data.
     """
 
     # Set device to GPU if available
@@ -50,8 +84,34 @@ def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None
     if optimizer is None:
         optimizer = optim.Adam(model.parameters(), lr=lr)
 
+    # Augment the training data with noise
+    if not noise_augmentation == 0:
+        print(f"Creating syntetic samples with noise, ratio of noise samples: {noise_augmentation}")
+        X_train, Y_train = augment_with_noise(X_train, Y_train, ratio=noise_augmentation)
+
+
+    # # Oversampling the training data (using the given ratio)
+    # if not oversampling == 0:
+    #     print(f"Oversampling training data with ratio {oversampling}")
+    #     original_shape = X_train.shape
+    #     print(f"Original training set shape: {original_shape}")
+    #
+    #     # Flatten the data for SMOTE
+    #     X_train_flat = X_train.reshape(X_train.shape[0], -1)
+    #
+    #     # Use BorderlineSMOTE instead of SMOTE
+    #     smote = BorderlineSMOTE(sampling_strategy=oversampling)
+    #     X_train_flat, Y_train = smote.fit_resample(X_train_flat, Y_train)  # Apply oversampling
+    #
+    #     # Reshape back to original format
+    #     X_train = X_train_flat.reshape(-1, original_shape[1], original_shape[2])
+    #     print(f"New training set shape after BorderlineSMOTE: {X_train.shape}")
+
+
     # Prepare data
     train_dataset = TensorDataset(torch.from_numpy(X_train).float(), Y_train)
+    # train_dataset = TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(Y_train).long())  # when adding noise
+
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
 
     val_dataset = TensorDataset(torch.from_numpy(X_val).float(), Y_val)
