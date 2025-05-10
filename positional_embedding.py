@@ -27,3 +27,19 @@ class SinusoidalPositionalEmbedding(nn.Module):
 
     def forward(self, x):
         return x + self.pe[:x.size(0), :].unsqueeze(1)
+
+
+
+class LearnablePositionalEmbedding(nn.Module):
+    '''
+    Learnable Positional Embedding module.
+    source: https://medium.com/biased-algorithms/how-to-modify-positional-encoding-in-torch-nn-transformer-bf7f5c5ba9c3
+    '''
+
+    def __init__(self, seq_len, d_model):
+        super(LearnablePositionalEmbedding, self).__init__()
+        self.pos_embedding = nn.Parameter(torch.zeros(seq_len, d_model))
+        nn.init.xavier_uniform_(self.pos_embedding)  # Initialize the learnable parameters
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.pos_embedding[:x.size(0), :].unsqueeze(1)  # [seq_len, 1, d_model]
