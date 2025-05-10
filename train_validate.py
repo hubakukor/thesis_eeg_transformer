@@ -90,27 +90,11 @@ def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None
         X_train, Y_train = augment_with_noise(X_train, Y_train, ratio=noise_augmentation)
 
 
-    # # Oversampling the training data (using the given ratio)
-    # if not oversampling == 0:
-    #     print(f"Oversampling training data with ratio {oversampling}")
-    #     original_shape = X_train.shape
-    #     print(f"Original training set shape: {original_shape}")
-    #
-    #     # Flatten the data for SMOTE
-    #     X_train_flat = X_train.reshape(X_train.shape[0], -1)
-    #
-    #     # Use BorderlineSMOTE instead of SMOTE
-    #     smote = BorderlineSMOTE(sampling_strategy=oversampling)
-    #     X_train_flat, Y_train = smote.fit_resample(X_train_flat, Y_train)  # Apply oversampling
-    #
-    #     # Reshape back to original format
-    #     X_train = X_train_flat.reshape(-1, original_shape[1], original_shape[2])
-    #     print(f"New training set shape after BorderlineSMOTE: {X_train.shape}")
-
-
     # Prepare data
-    train_dataset = TensorDataset(torch.from_numpy(X_train).float(), Y_train)
-    # train_dataset = TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(Y_train).long())  # when adding noise
+    if oversampling == 0:
+        train_dataset = TensorDataset(torch.from_numpy(X_train).float(), Y_train)
+    else:
+        train_dataset = TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(Y_train).long())  #bc of different format when creating synthetic samples
 
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
 

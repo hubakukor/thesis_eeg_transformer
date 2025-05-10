@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
 #import data_processing
-from positional_embedding import SinusoidalPositionalEmbedding
+from positional_embedding import SinusoidalPositionalEmbedding, LearnablePositionalEmbedding
 
 
 # Define the model architecture
@@ -24,10 +24,10 @@ class EEGTransformerModel(nn.Module):
 
         # CNN for local feature extraction
         self.conv = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=64, kernel_size=(3, 3), padding=(1, 1)),
+            nn.Conv2d(in_channels=1, out_channels=64, kernel_size=(1, 25), padding=(0, 12)),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=(3, 3), padding=(1, 1)),
+            nn.Conv2d(64, 128, kernel_size=(input_channels, 1), padding=(0, 0)),
             nn.BatchNorm2d(128),
             nn.ReLU()
         )
@@ -41,7 +41,8 @@ class EEGTransformerModel(nn.Module):
             self.positional_embedding = lambda x: x  # no embedding
         elif embedding_type == 'sinusoidal':
             self.positional_embedding = SinusoidalPositionalEmbedding(seq_len, d_model)
-
+        elif embedding_type == 'learnable':
+            self.positional_embedding = LearnablePositionalEmbedding(seq_len, d_model)
 
         # TransformerEncoder block for temporal dependencies
         encoder_layer = nn.TransformerEncoderLayer(
@@ -62,13 +63,12 @@ class EEGTransformerModel(nn.Module):
         """
         # CNN for feature extraction
         x = x.unsqueeze(1)  # → [batch, 1, 63, 1501]
-        x = self.conv(x)  # [batch, 128, 63, seq_len]
+        x = self.conv(x)  # → [batch, 128, 1, 1501]
 
+        x = x.squeeze(2)  # remove channel dim → [batch, 128, 1501]
 
-        # Permute to match transformer input (seq_len, batch_size, d_model)
-        x = x.permute(0, 2, 3, 1)  # [batch, 63, 1501, 128]
-        x = x.mean(dim=2)  # [batch, 63, 128]
-        x = x.permute(1, 0, 2)  # [seq_len=63, batch, d_model=128]
+        # Permute for transformer: [seq_len, batch, feature_dim]
+        x = x.permute(2, 0, 1)  # → [1501, batch, 128]
 
         # Linear projection to d_model
         x = self.proj(x)  # [seq_len, batch_size, d_model]
@@ -79,10 +79,6 @@ class EEGTransformerModel(nn.Module):
         # TransformerEncoder
         x = self.transformer(x)  # [seq_len, batch_size, d_model]
 
-        # Flatten the sequence and classify
-        # x = x.permute(1, 0, 2).contiguous()  # [batch_size, seq_len, d_model]
-        # x = x.mean(dim=1)  # Flatten to [batch_size, seq_len * d_model]
-        # x = self.fc(x)  # [batch_size, num_classes]
 
         # Permute: [batch, seq_len, d_model]
         x = x.permute(1, 0, 2)

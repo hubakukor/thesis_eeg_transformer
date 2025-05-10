@@ -19,17 +19,17 @@ data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
 
 #event libraries:
 
-# #global c
-# event_id_c = {
-#     'Stimulus/13': 0,  # both legs
-#     'Stimulus/15': 1  # Subtract
-# }
-
-#global b
-event_id_b = {
-    'Stimulus/12': 0,  # Right hand
+#global c
+event_id_c = {
+    'Stimulus/13': 0,  # both legs
     'Stimulus/15': 1  # Subtract
 }
+
+# #global b
+# event_id_b = {
+#     'Stimulus/12': 0,  # Right hand
+#     'Stimulus/15': 1  # Subtract
+# }
 #
 #inv
 # event_id_inv = {
@@ -44,12 +44,12 @@ event_id_b = {
 
 
 # #load data into train and test sets
-# X_train_c, X_val_c, X_test_c, Y_train_c, Y_val_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
+X_train_c, X_val_c, X_test_c, Y_train_c, Y_val_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
 
-X_train_b, X_val_b, X_test_b, Y_train_b, Y_val_b, Y_test_b = load_fif_data(data_dir_b, event_id_b)
+# X_train_b, X_val_b, X_test_b, Y_train_b, Y_val_b, Y_test_b = load_fif_data(data_dir_b, event_id_b)
 
 
-# X_train_inv, X_val_inv, X_test_inv, Y_train_inv, Y_val_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_b)
+# X_train_inv, X_val_inv, X_test_inv, Y_train_inv, Y_val_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_c)
 
 # Info about the number of events loaded
 '''
@@ -67,25 +67,25 @@ print("Shape B:", X_train_b.shape, X_test_b.shape)
 print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 '''
 
-# Train the model on global b
-# Define model
-model_b = EEGTransformerModel(embedding_type='none')
-train_model(model_b, X_train_b, Y_train_b, X_val_b, Y_val_b, lr=0.0005, noise_augmentation=0)
-#torch.save(model_b.state_dict(), "model_trained_on_global_b.pth")
+# # Train the model on global b
+# # Define model
+# model_b = EEGTransformerModel(embedding_type='none')
+# train_model(model_b, X_train_b, Y_train_b, X_val_b, Y_val_b, lr=0.0005, noise_augmentation=0)
+# #torch.save(model_b.state_dict(), "model_trained_on_global_b.pth")
+#
+# #validate
+# print("Test model on global b dataset")
+# validate_model(model_b, X_test_b, Y_test_b)
 
-#validate
-print("Test model on global b dataset")
-validate_model(model_b, X_test_b, Y_test_b)
 
-
-# #Train on c
-# #Define model
-# model_c = EEGTransformerModel(embedding_type='sinusoidal')
-# train_model(model_c, X_train_c, Y_train_c, epochs=30, lr=0.0005)
-# torch.save(model_c.state_dict(), "model_trained_on_global_c.pth")
+#Train on c
+#Define model
+model_c = EEGTransformerModel(embedding_type='sinusoidal')
+train_model(model_c, X_train_c, Y_train_c, X_val_c, Y_val_c, epochs=50, lr=0.0005, noise_augmentation=0.0)
+torch.save(model_c.state_dict(), "model_trained_on_global_c.pth")
 # print("Trained on dataset c with no embedding")
-# print("Validate model c on model c")
-# validate_model(model_c, X_test_c, Y_test_c)
+print("Validate model c")
+validate_model(model_c, X_test_c, Y_test_c)
 
 # # #Train on inv
 # # #Define model
@@ -99,8 +99,11 @@ validate_model(model_b, X_test_b, Y_test_b)
 # pretrain on inv
 
 # model_inv = EEGTransformerModel(embedding_type='sinusoidal')
-# train_model(model_inv, X_train_inv, Y_train_inv, epochs=20, lr=0.0005)
+# train_model(model_inv, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=20, lr=0.0005)
 # # torch.save(model_inv.state_dict(), "model_pretrained_on_inv.pth")
+#
+# print("Validate model before transfer learning")
+# validate_model(model_inv, X_test_c, Y_test_c)
 #
 #
 # # Freeze everything
@@ -125,11 +128,11 @@ validate_model(model_b, X_test_b, Y_test_b)
 # optimizer = optim.Adam(filter(lambda p: p.requires_grad, model_inv.parameters()), lr=0.0001)
 #
 # # Train
-# train_model(model_inv, X_train_b, Y_train_b, epochs=10, optimizer=optimizer)
+# train_model(model_inv, X_train_c, Y_train_c, X_val_c, Y_val_c, epochs=10, optimizer=optimizer)
 # # torch.save(model_inv.state_dict(), "model_transfer_inv_to_b.pth")
 #
-# print("Validate model inv on global b")
-# validate_model(model_inv, X_test_b, Y_test_b)
+# print("Validate model after transfer learning")
+# validate_model(model_inv, X_test_c, Y_test_c)
 # print("Validate model inv on global c")
 # validate_model(model_inv, X_test_c, Y_test_c)
 
