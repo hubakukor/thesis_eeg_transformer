@@ -5,10 +5,12 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
 import numpy as np
-from loading import load_fif_data
+from loading import load_fif_data, load_for_complete_cross_validation
 from train_validate import train_model, validate_model
-from model import EEGTransformerModel
+from model import EEGTransformerModel, ShallowConvNet
 from collections import Counter
+import pandas as pd
+from datetime import datetime
 
 #load data from files
 
@@ -20,16 +22,16 @@ data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
 #event libraries:
 
 #global c
-event_id_c = {
-    'Stimulus/13': 0,  # both legs
-    'Stimulus/15': 1  # Subtract
-}
-
-# #global b
-# event_id_b = {
-#     'Stimulus/12': 0,  # Right hand
+# event_id_c = {
+#     'Stimulus/13': 0,  # both legs
 #     'Stimulus/15': 1  # Subtract
 # }
+
+#global b
+event_id_b = {
+    'Stimulus/12': 0,  # Right hand
+    'Stimulus/15': 1  # Subtract
+}
 #
 #inv
 # event_id_inv = {
@@ -44,12 +46,14 @@ event_id_c = {
 
 
 # #load data into train and test sets
-X_train_c, X_val_c, X_test_c, Y_train_c, Y_val_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
+# X_train_c, X_val_c, X_test_c, Y_train_c, Y_val_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
 
 # X_train_b, X_val_b, X_test_b, Y_train_b, Y_val_b, Y_test_b = load_fif_data(data_dir_b, event_id_b)
 
 
-# X_train_inv, X_val_inv, X_test_inv, Y_train_inv, Y_val_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_c)
+# X_train_inv, X_val_inv, X_test_inv, Y_train_inv, Y_val_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_b)
+X_train_inv, X_val_inv, Y_train_inv, Y_val_inv = load_fif_data(data_dir_inv, event_id_b)
+
 
 # Info about the number of events loaded
 '''
@@ -80,12 +84,12 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 
 #Train on c
 #Define model
-model_c = EEGTransformerModel(embedding_type='sinusoidal')
-train_model(model_c, X_train_c, Y_train_c, X_val_c, Y_val_c, epochs=50, lr=0.0005, noise_augmentation=0.0)
-torch.save(model_c.state_dict(), "model_trained_on_global_c.pth")
-# print("Trained on dataset c with no embedding")
-print("Validate model c")
-validate_model(model_c, X_test_c, Y_test_c)
+# model_c = EEGTransformerModel(embedding_type='sinusoidal')
+# train_model(model_c, X_train_c, Y_train_c, X_val_c, Y_val_c, epochs=50, lr=0.0005, noise_augmentation=0.0)
+# torch.save(model_c.state_dict(), "model_trained_on_global_c.pth")
+# # print("Trained on dataset c with no embedding")
+# print("Validate model c")
+# validate_model(model_c, X_test_c, Y_test_c)
 
 # # #Train on inv
 # # #Define model
@@ -98,10 +102,11 @@ validate_model(model_c, X_test_c, Y_test_c)
 
 # pretrain on inv
 
-# model_inv = EEGTransformerModel(embedding_type='sinusoidal')
-# train_model(model_inv, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=20, lr=0.0005)
-# # torch.save(model_inv.state_dict(), "model_pretrained_on_inv.pth")
-#
+# model_convnet = ShallowConvNet()
+# train_model(model_convnet, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=50, lr=0.0005)
+# print("Trained on inv")
+# torch.save(model_convnet.state_dict(), "convnet_pretrained_on_inv_for_transfer.pth")
+
 # print("Validate model before transfer learning")
 # validate_model(model_inv, X_test_c, Y_test_c)
 #
@@ -137,41 +142,65 @@ validate_model(model_c, X_test_c, Y_test_c)
 # validate_model(model_inv, X_test_c, Y_test_c)
 
 
-# # Pretrain on all 3, then transfer on global c
-#
-# X_train_all = np.concatenate([X_train_c, X_train_b, X_train_inv], axis=0)
-# Y_train_all = torch.cat((Y_train_c, Y_train_b, Y_train_inv), dim=0)
-#
-# print("Pretraining class counts:", torch.unique(Y_train_all, return_counts=True))
-#
-# model_all = EEGTransformerModel(num_classes=3)
-# train_model(model_all, X_train_all, Y_train_all, epochs=40, lr=0.0005)
-# torch.save(model_all.state_dict(), "model_pretrained_on_all.pth")
-#
-# print("Finished pretraining on all datasets, starting transfer learning on c")
-# print("Transfer tuning on global c class counts:", torch.unique(Y_train_c, return_counts=True))
-#
-# model_transfer = EEGTransformerModel(num_classes=2)
-# state_dict = torch.load("model_pretrained_on_all.pth")
-#
-# # Remove fc layer weights since dimensions changed
-# del state_dict["fc.weight"]
-# del state_dict["fc.bias"]
-# model_transfer.load_state_dict(state_dict, strict=False)
-#
-# #freeze everything but fc and projection layer
-# for param in model_transfer.parameters():
-#     param.requires_grad = False
-# for param in model_transfer.proj.parameters():
-#     param.requires_grad = True
-# for param in model_transfer.fc.parameters():
-#     param.requires_grad = True
-# # Unfreeze the last transformer layer
-# for param in model_transfer.transformer.layers[-1].parameters():
-#     param.requires_grad = True
-#
-# #tune on global c
-# optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model_transfer.parameters()), lr=0.0001)
-# train_model(model_transfer, X_train_c, Y_train_c, epochs=20, optimizer=optimizer)
-#
-# validate_model(model_transfer, X_test_c, Y_test_c)
+# Using cross validation, fine tune the pretrained_on_inv model on the global b dataset
+
+folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064"]
+results = []
+
+for target_folder in folder_names:
+    X_train, X_val, X_test, Y_train, Y_val, Y_test = load_for_complete_cross_validation(data_dir_b, event_id_b, target_folder)
+    print(f"\n==== Training on all folders except '{target_folder}' ====")
+
+    # model = EEGTransformerModel(embedding_type='sinusoidal')
+    model = ShallowConvNet()
+    state_dict = torch.load("convnet_pretrained_on_inv_for_transfer.pth")  # or wherever your file is
+    model.load_state_dict(state_dict)
+
+    # Freeze everything
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Unfreeze layers in the transformer based model
+    # # Unfreeze and reset classifier
+    # for param in model.fc.parameters():
+    #     param.requires_grad = True
+    # model.fc.reset_parameters()
+    #
+    # # unfreeze and reset projection layer
+    # for param in model.proj.parameters():
+    #     param.requires_grad = True
+    # model.proj.reset_parameters()
+    #
+    # # Unfreeze the last transformer layer
+    # for param in model.transformer.layers[-1].parameters():
+    #     param.requires_grad = True
+
+    #Unfreeze layers in the shallow convnet model
+    model.classifier.reset_parameters()
+    for param in model.classifier.parameters():
+        param.requires_grad = True
+
+    #Unfreeze the spatial convolution layer
+    for param in model.conv_spat.parameters():
+        param.requires_grad = True
+
+    # Create optimizer only for unfrozen params, lower learning rate
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0001)
+
+    # Train
+    train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=optimizer)
+
+    print("Validate model after transfer learning")
+    val_loss, val_acc, val_bal_acc = validate_model(model, X_test, Y_test)
+
+
+    results.append({
+        "test_folder": target_folder,
+        "accuracy": val_acc,
+        "balanced_accuracy": val_bal_acc,
+        "loss": val_loss
+    })
+
+#save the results into a csv file
+df = pd.DataFrame(results)
+df.to_excel(f"cross_val_results_shallow_convnet_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", index=False)

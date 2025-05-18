@@ -88,3 +88,66 @@ class EEGTransformerModel(nn.Module):
         x = self.fc(x)  # → [batch, num_classes]
 
         return x
+
+
+
+class ShallowConvNet(nn.Module):
+    def __init__(self, input_channels=63, input_time_length=1501, num_classes=2):
+        """
+        ShallowConvNet based on Dose et al. (2018) and Schirrmeister et al. (2017).
+
+        Args:
+            input_channels (int): Number of input channels (EEG channels).
+            input_time_length (int): Length of the time series (sequence length).
+            num_classes (int): Number of output classes for classification.
+        """
+        super(ShallowConvNet, self).__init__()
+
+        # 1D convolution along the time axis
+        self.conv_time = nn.Conv2d(
+            in_channels=1,
+            out_channels=40,
+            kernel_size=(1, 25),
+            stride=1,
+            padding=(0, 12),
+            bias=False
+        )
+
+        # 1D convolution along the spatial axis
+        self.conv_spat = nn.Conv2d(
+            in_channels=40,
+            out_channels=40,
+            kernel_size=(input_channels, 1),
+            stride=1,
+            bias=False
+        )
+
+        self.batch_norm = nn.BatchNorm2d(40) # Batch normalization
+        self.pooling = nn.AvgPool2d(kernel_size=(1, 75), stride=(1, 15)) # Average Pooling
+        self.classifier = nn.Linear(self._calculate_flatten_size(input_time_length), num_classes) # Final classifier
+
+    # Calculate the size of the flattened tensor fot the fc layer
+    def _calculate_flatten_size(self, input_time_length):
+        with torch.no_grad():
+            x = torch.zeros(1, 1, 63, input_time_length)
+            x = self.conv_time(x)
+            x = self.conv_spat(x)
+            x = self.batch_norm(x)
+            x = x ** 2
+            x = self.pooling(x)
+            x = torch.log(torch.clamp(x, min=1e-6))
+            x = x.view(1, -1)
+            return x.shape[1]
+
+    def forward(self, x):
+        x = x.unsqueeze(1)  # [batch, 1, channels, time]
+        x = self.conv_time(x)
+        x = self.conv_spat(x)
+        x = self.batch_norm(x)
+        x = x ** 2
+        x = self.pooling(x)
+        x = torch.log(torch.clamp(x, min=1e-6))
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
+

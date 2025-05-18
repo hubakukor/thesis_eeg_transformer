@@ -91,7 +91,7 @@ def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None
 
 
     # Prepare data
-    if oversampling == 0:
+    if noise_augmentation == 0:
         train_dataset = TensorDataset(torch.from_numpy(X_train).float(), Y_train)
     else:
         train_dataset = TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(Y_train).long())  #bc of different format when creating synthetic samples
