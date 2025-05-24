@@ -24,13 +24,14 @@ def normalize_epoch_minmax(epoch):
     return norm
 
 
-def load_fif_data(data_dir, event_id):
+def load_fif_data(data_dir, event_id, test_set=False):
     """
     Loads the data and splits it into training, validation, and test sets.
 
     Args:
         data_dir (str): The directory containing the EEG data.
         event_id (dict): A dictionary mapping event names to their corresponding integer IDs.
+        test_set (bool): Whether to create the test set or not.
 
     Returns:
         X_train, X_val, X_test, Y_train, Y_val, Y_test: Lists of numpy arrays containing the training, validation, and test data, and their corresponding labels.
@@ -97,52 +98,58 @@ def load_fif_data(data_dir, event_id):
             X.append(epoch_data)
 
 
-            print(f"Number of channels: {len(raw.ch_names)}")
-            '''
-            #print some general info about the data
-            print(raw.info)
-            print(f"Sampling frequency: {raw.info['sfreq']} Hz")
-            print(f"Number of channels: {len(raw.ch_names)}")
-            print(f"Channel names: {raw.ch_names}")
-            print("Annotations:", raw.annotations)
-            print("Extracted events:\n", events)
-            print("Event ID mapping:", event_id)
-            unique, counts = np.unique(events[:, -1], return_counts=True)
-            print("Filtered Event Frequency:", dict(zip(unique, counts)))
-            print("Final unique labels in Y:", np.unique(Y))
-            '''
+            # #print some general info about the data
+            # print(f"Number of channels: {len(raw.ch_names)}")
+            # print(raw.info)
+            # print(f"Sampling frequency: {raw.info['sfreq']} Hz")
+            # print(f"Number of channels: {len(raw.ch_names)}")
+            # print(f"Channel names: {raw.ch_names}")
+            # print("Annotations:", raw.annotations)
+            # print("Extracted events:\n", events)
+            # print("Event ID mapping:", event_id)
+            # unique, counts = np.unique(events[:, -1], return_counts=True)
+            # print("Filtered Event Frequency:", dict(zip(unique, counts)))
+            # print("Final unique labels in Y:", np.unique(Y))
+
 
 
     # Convert the list to numpy array
     X = np.concatenate(X, axis=0)
     Y = np.concatenate(Y, axis=0)
 
-    # First split into train, validation and test sets (0.64, 0.16, 0.20)
-    # X_temp, X_test, Y_temp, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
-    #
-    # X_train, X_val, Y_train, Y_val = train_test_split(X_temp, Y_temp, test_size=0.2, random_state=42)
 
-    # Split into training and validation (0.8, 0.2), no test set
-    X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=0.2, random_state=42)
+    if test_set:
+        # First split into train, validation and test sets (0.64, 0.16, 0.20)
+        X_temp, X_test, Y_temp, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+        X_train, X_val, Y_train, Y_val = train_test_split(X_temp, Y_temp, test_size=0.2, random_state=42)
+    else:
+        # First split into train, validation and test sets (0.64, 0.16, 0.20)
+        X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=0.2, random_state=42)
+
+
 
 
     # One-Hot Encode the Labels
     encoder = OneHotEncoder(sparse_output=False)
     Y_train = encoder.fit_transform(Y_train.reshape(-1, 1))
-    # Y_test = encoder.transform(Y_test.reshape(-1, 1))
+    if test_set:
+        Y_test = encoder.transform(Y_test.reshape(-1, 1))
     Y_val = encoder.transform(Y_val.reshape(-1, 1))
 
     # Convert one-hot-encoded labels to integer class labels
     Y_train = torch.argmax(torch.tensor(Y_train, dtype=torch.float32), axis=1).long()
-    # Y_test = torch.argmax(torch.tensor(Y_test, dtype=torch.float32), axis=1).long()
+    if test_set:
+        Y_test = torch.argmax(torch.tensor(Y_test, dtype=torch.float32), axis=1).long()
     Y_val = torch.argmax(torch.tensor(Y_val, dtype=torch.float32), axis=1).long()
 
     #check label distribution
     unique, counts = np.unique(Y, return_counts=True)
     print("Final label distribution (all data):", dict(zip(unique, counts)))
 
-    # return X_train, X_val, X_test, Y_train, Y_val, Y_test
-    return X_train, X_val, Y_train, Y_val
+    if test_set:
+        return X_train, X_val, X_test, Y_train, Y_val, Y_test
+    else:
+        return X_train, X_val, Y_train, Y_val
 
 def load_for_complete_cross_validation(data_dir, event_id, test_folder):
     """

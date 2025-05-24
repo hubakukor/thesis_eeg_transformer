@@ -47,7 +47,7 @@ def augment_with_noise(X, Y, ratio=0.5, noise_level=0.01):
 
 # Training function
 def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None,
-                lr=0.0005, patience=5, oversampling=0, noise_augmentation=0):
+                lr=0.0005, patience=5, noise_augmentation=0):
     """
     Train the model using the training dataset.
 
@@ -224,12 +224,11 @@ def validate_model(model, X_test, Y_test):
     print(f"\n True class distribution: {true_counts}")
     print(f" Predicted class distribution: {pred_counts}")
 
-    #confusion matrix
     # Confusion matrix
-    cm = confusion_matrix(all_targets, all_preds)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm)
-    disp.plot(cmap='Blues')
-    plt.title("Confusion Matrix")
-    plt.show()
+    # cm = confusion_matrix(all_targets, all_preds)
+    # disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+    # disp.plot(cmap='Blues')
+    # plt.title("Confusion Matrix")
+    # plt.show()
 
     return avg_loss, accuracy, balanced_acc

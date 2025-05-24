@@ -11,6 +11,8 @@ from model import EEGTransformerModel, ShallowConvNet
 from collections import Counter
 import pandas as pd
 from datetime import datetime
+from braindecode.models import EEGConformer
+import os
 
 #load data from files
 
@@ -51,8 +53,8 @@ event_id_b = {
 # X_train_b, X_val_b, X_test_b, Y_train_b, Y_val_b, Y_test_b = load_fif_data(data_dir_b, event_id_b)
 
 
-# X_train_inv, X_val_inv, X_test_inv, Y_train_inv, Y_val_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_b)
-X_train_inv, X_val_inv, Y_train_inv, Y_val_inv = load_fif_data(data_dir_inv, event_id_b)
+# X_train_inv, X_val_inv, X_test_inv, Y_train_inv, Y_val_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_b, test_set=True)
+# X_train_inv, X_val_inv, Y_train_inv, Y_val_inv = load_fif_data(data_dir_inv, event_id_b, test_set=False)
 
 
 # Info about the number of events loaded
@@ -71,15 +73,17 @@ print("Shape B:", X_train_b.shape, X_test_b.shape)
 print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 '''
 
-# # Train the model on global b
-# # Define model
+# Train the model on global b
+# Define model
 # model_b = EEGTransformerModel(embedding_type='none')
-# train_model(model_b, X_train_b, Y_train_b, X_val_b, Y_val_b, lr=0.0005, noise_augmentation=0)
+
+
+# train_model(model, X_train_b, Y_train_b, X_val_b, Y_val_b)
 # #torch.save(model_b.state_dict(), "model_trained_on_global_b.pth")
 #
 # #validate
 # print("Test model on global b dataset")
-# validate_model(model_b, X_test_b, Y_test_b)
+# validate_model(model, X_test_b, Y_test_b)
 
 
 #Train on c
@@ -106,6 +110,16 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 # train_model(model_convnet, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=50, lr=0.0005)
 # print("Trained on inv")
 # torch.save(model_convnet.state_dict(), "convnet_pretrained_on_inv_for_transfer.pth")
+
+# model_conformer = EEGConformer(
+#     n_chans=63,          # number of EEG channels
+#     n_classes=2,          # number of output classes
+#     input_window_samples=1501,  # number of time samples in each window
+#     sfreq=500,
+#     final_fc_length="auto",  # length of the final fully connected layer
+# )
+# train_model(model_conformer, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=50, lr=0.0005)
+# torch.save(model_conformer.state_dict(), "conformer_pretrained_on_inv_for_transfer.pth")
 
 # print("Validate model before transfer learning")
 # validate_model(model_inv, X_test_c, Y_test_c)
@@ -144,23 +158,46 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 
 # Using cross validation, fine tune the pretrained_on_inv model on the global b dataset
 
-folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064"]
+folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064"] #global b
+# folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064", "E065", "E066", "E067", "E068"] #global c
+
 results = []
 
 for target_folder in folder_names:
     X_train, X_val, X_test, Y_train, Y_val, Y_test = load_for_complete_cross_validation(data_dir_b, event_id_b, target_folder)
     print(f"\n==== Training on all folders except '{target_folder}' ====")
 
-    # model = EEGTransformerModel(embedding_type='sinusoidal')
-    model = ShallowConvNet()
-    state_dict = torch.load("convnet_pretrained_on_inv_for_transfer.pth")  # or wherever your file is
+    # model = EEGTransformerModel(embedding_type='learnable')
+    # model = ShallowConvNet()
+
+    model = EEGConformer(
+        n_chans=63,  # number of EEG channels
+        n_classes=2,  # number of output classes
+        input_window_samples=1501,  # number of time samples in each window
+        sfreq=500,
+        final_fc_length="auto",  # length of the final fully connected layer
+    )
+
+    state_dict = torch.load("conformer_pretrained_on_inv_for_transfer.pth")
     model.load_state_dict(state_dict)
 
-    # Freeze everything
+    #set the trainable layers in the conformer model
     for param in model.parameters():
-        param.requires_grad = False
+        param.requires_grad = False #freeze everything
 
-    # Unfreeze layers in the transformer based model
+    for name, param in model.named_parameters():
+        if (
+            "fc" in name or
+            "projection" in name or
+            "encoder.5" in name  # last encoder block
+        ):
+            param.requires_grad = True
+
+#set the trainable layers in the eeg_transformer model
+    # # Freeze everything
+    # for param in model.parameters():
+    #     param.requires_grad = False
+    #
     # # Unfreeze and reset classifier
     # for param in model.fc.parameters():
     #     param.requires_grad = True
@@ -175,20 +212,20 @@ for target_folder in folder_names:
     # for param in model.transformer.layers[-1].parameters():
     #     param.requires_grad = True
 
-    #Unfreeze layers in the shallow convnet model
-    model.classifier.reset_parameters()
-    for param in model.classifier.parameters():
-        param.requires_grad = True
-
-    #Unfreeze the spatial convolution layer
-    for param in model.conv_spat.parameters():
-        param.requires_grad = True
+    # #Unfreeze layers in the shallow convnet model
+    # model.classifier.reset_parameters()
+    # for param in model.classifier.parameters():
+    #     param.requires_grad = True
+    #
+    # #Unfreeze the spatial convolution layer
+    # for param in model.conv_spat.parameters():
+    #     param.requires_grad = True
 
     # Create optimizer only for unfrozen params, lower learning rate
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0001)
 
     # Train
-    train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=optimizer)
+    train_model(model, X_train, Y_train, X_val, Y_val, epochs=50)
 
     print("Validate model after transfer learning")
     val_loss, val_acc, val_bal_acc = validate_model(model, X_test, Y_test)
@@ -203,4 +240,7 @@ for target_folder in folder_names:
 
 #save the results into a csv file
 df = pd.DataFrame(results)
-df.to_excel(f"cross_val_results_shallow_convnet_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", index=False)
+timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+filename = f"cross_val_conformer_inv_to_b_{timestamp}.xlsx"
+filepath = os.path.join("results_xlsx", filename)
+df.to_excel(filepath, index=False)
