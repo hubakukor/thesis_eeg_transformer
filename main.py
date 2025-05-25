@@ -13,6 +13,8 @@ import pandas as pd
 from datetime import datetime
 from braindecode.models import EEGConformer
 import os
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 #load data from files
 
@@ -107,9 +109,10 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 # pretrain on inv
 
 # model_convnet = ShallowConvNet()
-# train_model(model_convnet, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=50, lr=0.0005)
+# model = EEGTransformerModel(embedding_type='sinusoidal')
+# train_model(model, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=50, lr=0.0005)
 # print("Trained on inv")
-# torch.save(model_convnet.state_dict(), "convnet_pretrained_on_inv_for_transfer.pth")
+# torch.save(model.state_dict(), "model_pretrained_on_inv_for_transfer.pth")
 
 # model_conformer = EEGConformer(
 #     n_chans=63,          # number of EEG channels
@@ -163,54 +166,60 @@ folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", 
 
 results = []
 
+# Save predictions for confusion matrix
+all_preds_all_folds = []
+all_targets_all_folds = []
+
 for target_folder in folder_names:
     X_train, X_val, X_test, Y_train, Y_val, Y_test = load_for_complete_cross_validation(data_dir_b, event_id_b, target_folder)
     print(f"\n==== Training on all folders except '{target_folder}' ====")
 
-    # model = EEGTransformerModel(embedding_type='learnable')
+    model = EEGTransformerModel(embedding_type='sinusoidal')
     # model = ShallowConvNet()
 
-    model = EEGConformer(
-        n_chans=63,  # number of EEG channels
-        n_classes=2,  # number of output classes
-        input_window_samples=1501,  # number of time samples in each window
-        sfreq=500,
-        final_fc_length="auto",  # length of the final fully connected layer
-    )
+    # model = EEGConformer(
+    #     n_chans=63,  # number of EEG channels
+    #     n_classes=2,  # number of output classes
+    #     input_window_samples=1501,  # number of time samples in each window
+    #     sfreq=500,
+    #     final_fc_length="auto",  # length of the final fully connected layer
+    # )
 
-    state_dict = torch.load("conformer_pretrained_on_inv_for_transfer.pth")
+    # Load the weights of the pretrained model
+    state_dict = torch.load("model_pretrained_on_inv_for_transfer.pth")
     model.load_state_dict(state_dict)
+    #
 
-    #set the trainable layers in the conformer model
-    for param in model.parameters():
-        param.requires_grad = False #freeze everything
-
-    for name, param in model.named_parameters():
-        if (
-            "fc" in name or
-            "projection" in name or
-            "encoder.5" in name  # last encoder block
-        ):
-            param.requires_grad = True
+    # #set the trainable layers in the conformer model
+    # for param in model.parameters():
+    #     param.requires_grad = False #freeze everything
+    #
+    # for name, param in model.named_parameters():
+    #     if (
+    #         "fc" in name or # last fully connected layer
+    #         "projection" in name or # last projection layer
+    #         "encoder.5" in name  # last encoder block
+    #     ):
+    #         param.requires_grad = True
 
 #set the trainable layers in the eeg_transformer model
-    # # Freeze everything
-    # for param in model.parameters():
-    #     param.requires_grad = False
-    #
-    # # Unfreeze and reset classifier
-    # for param in model.fc.parameters():
-    #     param.requires_grad = True
+    # Freeze everything
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Unfreeze and reset classifier
+    for param in model.fc.parameters():
+        param.requires_grad = True
     # model.fc.reset_parameters()
-    #
-    # # unfreeze and reset projection layer
-    # for param in model.proj.parameters():
-    #     param.requires_grad = True
+
+    # unfreeze and reset projection layer
+    for param in model.proj.parameters():
+        param.requires_grad = True
     # model.proj.reset_parameters()
-    #
-    # # Unfreeze the last transformer layer
-    # for param in model.transformer.layers[-1].parameters():
-    #     param.requires_grad = True
+
+    # Unfreeze the last transformer layer
+    for param in model.transformer.layers[-1].parameters():
+        param.requires_grad = True
 
     # #Unfreeze layers in the shallow convnet model
     # model.classifier.reset_parameters()
@@ -228,9 +237,13 @@ for target_folder in folder_names:
     train_model(model, X_train, Y_train, X_val, Y_val, epochs=50)
 
     print("Validate model after transfer learning")
-    val_loss, val_acc, val_bal_acc = validate_model(model, X_test, Y_test)
+    val_loss, val_acc, val_bal_acc, preds, targets = validate_model(model, X_test, Y_test, return_preds_targets=True)
 
+    # Accumulate all predictions
+    all_preds_all_folds.extend(preds)
+    all_targets_all_folds.extend(targets)
 
+    #Log results
     results.append({
         "test_folder": target_folder,
         "accuracy": val_acc,
@@ -241,6 +254,13 @@ for target_folder in folder_names:
 #save the results into a csv file
 df = pd.DataFrame(results)
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-filename = f"cross_val_conformer_inv_to_b_{timestamp}.xlsx"
+filename = f"cross_val_transformer_inv_to_b_no_reset_{timestamp}.xlsx"
 filepath = os.path.join("results_xlsx", filename)
 df.to_excel(filepath, index=False)
+
+# Plot confusion matrix for all folds
+cm = confusion_matrix(all_targets_all_folds, all_preds_all_folds)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Class 0", "Class 1"])
+disp.plot(cmap='Blues')
+plt.title("Confusion Matrix (Custom Model, All Folds)")
+plt.show()

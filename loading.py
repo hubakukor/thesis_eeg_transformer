@@ -167,6 +167,7 @@ def load_for_complete_cross_validation(data_dir, event_id, test_folder):
     # Get a list of all subject folders
     subject_folders = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
 
+
     # Separate the folders from the test folder
     train_val_folders = [f for f in subject_folders if f != test_folder]
 

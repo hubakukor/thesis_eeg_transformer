@@ -172,15 +172,14 @@ def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None
 
 
 # Validation function
-def validate_model(model, X_test, Y_test):
+def validate_model(model, X_test, Y_test, return_preds_targets=False, plot_confusion_matrix=False):
     """
     Validate the model using the validation dataset.
 
     Args:
         model: The model to validate.
-        val_loader: DataLoader for the validation dataset.
-        criterion: Loss function to compute the validation loss.
-        device: Device to validate on ('cuda' or 'cpu').
+        X_test, Y_test: Validation dataset and its labels.
+        return_preds_targets: Whether to return the predictions and targets for the confusion matrix.
     """
     # Set device to GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -224,11 +223,15 @@ def validate_model(model, X_test, Y_test):
     print(f"\n True class distribution: {true_counts}")
     print(f" Predicted class distribution: {pred_counts}")
 
-    # Confusion matrix
-    # cm = confusion_matrix(all_targets, all_preds)
-    # disp = ConfusionMatrixDisplay(confusion_matrix=cm)
-    # disp.plot(cmap='Blues')
-    # plt.title("Confusion Matrix")
-    # plt.show()
+    #plot confusion matrix if requested
+    if plot_confusion_matrix:
+        cm = confusion_matrix(all_targets, all_preds)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+        disp.plot(cmap='Blues')
+        plt.title("Confusion Matrix")
+        plt.show()
 
-    return avg_loss, accuracy, balanced_acc
+    if return_preds_targets:
+        return avg_loss, accuracy, balanced_acc, all_preds, all_targets
+    else:
+        return avg_loss, accuracy, balanced_acc
