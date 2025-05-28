@@ -34,7 +34,7 @@ def load_fif_data(data_dir, event_id, test_set=False):
         test_set (bool): Whether to create the test set or not.
 
     Returns:
-        X_train, X_val, X_test, Y_train, Y_val, Y_test: Lists of numpy arrays containing the training, validation, and test data, and their corresponding labels.
+        X_train, X_val, X_test (optional), Y_train, Y_val, Y_test (optional): Lists of numpy arrays containing the training, validation, and test data, and their corresponding labels.
     """
 
     subject_folders = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]

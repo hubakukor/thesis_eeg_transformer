@@ -55,11 +55,14 @@ def train_model(model, X_train, Y_train, X_val, Y_val, epochs=50, optimizer=None
         model: The model to train.
         X_train, Y_train: Training dataset and its labels.
         X_val, Y_val: Validation dataset and its labels.
-        epochs: Number of training epochs.
-        optimizer: Optimizer to use for training.
+        epochs: Maximum number of training epochs.
+        optimizer: Optimizer to use for training. If not specified, Adam optimizer is used.
         lr: Learning rate for the optimizer.
         patience: Number of epochs without improvement before early stopping.
-        oversampling: Ratio of oversampling for the training data.
+        noise_augmentation: Ratio of the synthetic samples to create. 0 means no augmentation.
+
+    Returns:
+        model: Trained model.
     """
 
     # Set device to GPU if available
@@ -179,7 +182,12 @@ def validate_model(model, X_test, Y_test, return_preds_targets=False, plot_confu
     Args:
         model: The model to validate.
         X_test, Y_test: Validation dataset and its labels.
-        return_preds_targets: Whether to return the predictions and targets for the confusion matrix.
+        return_preds_targets: If True, returns the predictions and targets for the confusion matrix.
+        plot_confusion_matrix: If True, plots the confusion matrix.
+
+    Returns:
+        avg_loss, accuracy, balanced_acc: Average loss, accuracy, and balanced accuracy.
+        all_preds, all_targets (optional): Predictions and targets for the confusion matrix.
     """
     # Set device to GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

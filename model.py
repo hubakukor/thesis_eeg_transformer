@@ -12,6 +12,8 @@ from positional_embedding import SinusoidalPositionalEmbedding, LearnablePositio
 class EEGTransformerModel(nn.Module):
     def __init__(self, input_channels=63, seq_len=1501, d_model=128, nhead=4, num_encoder_layers=2, num_classes=2, embedding_type='none'):
         """
+        Class for the EEG Transformer model.
+
         Args:
             input_channels (int): Number of input channels (EEG channels).
             seq_len (int): Length of the time series (sequence length).
@@ -19,6 +21,10 @@ class EEGTransformerModel(nn.Module):
             nhead (int): Number of attention heads in the transformer.
             num_encoder_layers (int): Number of encoder layers in the transformer.
             num_classes (int): Number of output classes for classification.
+            embedding_type (str): Type of embedding to use. Options are 'sinusoidal', 'learnable', and 'none'.
+
+        returns:
+            model: EEGTransformerModel instance.
         """
         super(EEGTransformerModel, self).__init__()
 

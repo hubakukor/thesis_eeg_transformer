@@ -8,6 +8,13 @@ class SinusoidalPositionalEmbedding(nn.Module):
     '''
     Sinusoidal Positional Embedding
     The type of embedding used in the original transformer model (Attention is all you need)
+
+    Args:
+        seq_len: Length of the sequence.
+        d_model: Dimensionality of the model.
+
+    Returns:
+        pe: Positional embedding matrix.
     '''
     def __init__(self, seq_len, d_model):
         super().__init__()
@@ -34,6 +41,13 @@ class LearnablePositionalEmbedding(nn.Module):
     '''
     Learnable Positional Embedding module.
     source: https://medium.com/biased-algorithms/how-to-modify-positional-encoding-in-torch-nn-transformer-bf7f5c5ba9c3
+
+    Args:
+        seq_len: Length of the sequence.
+        d_model: Dimensionality of the model.
+
+    Returns:
+        pos_embedding: Learnable positional embedding matrix.
     '''
 
     def __init__(self, seq_len, d_model):
