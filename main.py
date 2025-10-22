@@ -7,7 +7,7 @@ import torch.optim as optim
 import numpy as np
 from loading import load_fif_data, load_for_complete_cross_validation
 from train_validate import train_model, validate_model
-from model import EEGTransformerModel, ShallowConvNet
+from model import EEGTransformerModel, ShallowConvNet, MultiscaleConvolution
 from collections import Counter
 import pandas as pd
 from datetime import datetime
@@ -52,7 +52,7 @@ event_id_b = {
 # #load data into train and test sets
 # X_train_c, X_val_c, X_test_c, Y_train_c, Y_val_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
 
-# X_train_b, X_val_b, X_test_b, Y_train_b, Y_val_b, Y_test_b = load_fif_data(data_dir_b, event_id_b)
+# X_train_b, X_val_b, X_test_b, Y_train_b, Y_val_b, Y_test_b = load_fif_data(data_dir_b, event_id_b, test_set=True)
 
 
 # X_train_inv, X_val_inv, X_test_inv, Y_train_inv, Y_val_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_b, test_set=True)
@@ -77,15 +77,16 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 
 # Train the model on global b
 # Define model
-# model_b = EEGTransformerModel(embedding_type='none')
+# model_b = MultiscaleConvolution()
 
 
-# train_model(model, X_train_b, Y_train_b, X_val_b, Y_val_b)
-# #torch.save(model_b.state_dict(), "model_trained_on_global_b.pth")
-#
-# #validate
-# print("Test model on global b dataset")
-# validate_model(model, X_test_b, Y_test_b)
+# train_model(model_b, X_train_b, Y_train_b, X_val_b, Y_val_b)
+#torch.save(model_b.state_dict(), "model_trained_on_global_b.pth")
+
+#validate
+
+
+
 
 
 #Train on c
@@ -174,8 +175,9 @@ for target_folder in folder_names:
     X_train, X_val, X_test, Y_train, Y_val, Y_test = load_for_complete_cross_validation(data_dir_b, event_id_b, target_folder)
     print(f"\n==== Training on all folders except '{target_folder}' ====")
 
-    model = EEGTransformerModel(embedding_type='sinusoidal')
-    # model = ShallowConvNet()
+    # model = EEGTransformerModel(embedding_type='sinusoidal')
+    model = ShallowConvNet()
+    # model = MultiscaleConvolution()
 
     # model = EEGConformer(
     #     n_chans=63,  # number of EEG channels
@@ -186,8 +188,8 @@ for target_folder in folder_names:
     # )
 
     # Load the weights of the pretrained model
-    state_dict = torch.load("model_pretrained_on_inv_for_transfer.pth")
-    model.load_state_dict(state_dict)
+    # state_dict = torch.load("model_pretrained_on_inv_for_transfer.pth")
+    # model.load_state_dict(state_dict)
     #
 
     # #set the trainable layers in the conformer model
@@ -202,24 +204,24 @@ for target_folder in folder_names:
     #     ):
     #         param.requires_grad = True
 
-#set the trainable layers in the eeg_transformer model
-    # Freeze everything
-    for param in model.parameters():
-        param.requires_grad = False
-
-    # Unfreeze and reset classifier
-    for param in model.fc.parameters():
-        param.requires_grad = True
-    # model.fc.reset_parameters()
-
-    # unfreeze and reset projection layer
-    for param in model.proj.parameters():
-        param.requires_grad = True
-    # model.proj.reset_parameters()
-
-    # Unfreeze the last transformer layer
-    for param in model.transformer.layers[-1].parameters():
-        param.requires_grad = True
+# #set the trainable layers in the eeg_transformer model
+#     # Freeze everything
+#     for param in model.parameters():
+#         param.requires_grad = False
+#
+#     # Unfreeze and reset classifier
+#     for param in model.fc.parameters():
+#         param.requires_grad = True
+#     # model.fc.reset_parameters()
+#
+#     # unfreeze and reset projection layer
+#     for param in model.proj.parameters():
+#         param.requires_grad = True
+#     # model.proj.reset_parameters()
+#
+#     # Unfreeze the last transformer layer
+#     for param in model.transformer.layers[-1].parameters():
+#         param.requires_grad = True
 
     # #Unfreeze layers in the shallow convnet model
     # model.classifier.reset_parameters()
@@ -231,12 +233,12 @@ for target_folder in folder_names:
     #     param.requires_grad = True
 
     # Create optimizer only for unfrozen params, lower learning rate
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0001)
+    # optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0001)
 
     # Train
     train_model(model, X_train, Y_train, X_val, Y_val, epochs=50)
 
-    print("Validate model after transfer learning")
+    print("Test model")
     val_loss, val_acc, val_bal_acc, preds, targets = validate_model(model, X_test, Y_test, return_preds_targets=True)
 
     # Accumulate all predictions
@@ -254,7 +256,7 @@ for target_folder in folder_names:
 #save the results into a csv file
 df = pd.DataFrame(results)
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-filename = f"cross_val_transformer_inv_to_b_no_reset_{timestamp}.xlsx"
+filename = f"cross_val_convnet_{timestamp}.xlsx"
 filepath = os.path.join("results_xlsx", filename)
 df.to_excel(filepath, index=False)
 

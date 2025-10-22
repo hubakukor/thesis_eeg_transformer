@@ -157,3 +157,77 @@ class ShallowConvNet(nn.Module):
         x = self.classifier(x)
         return x
 
+
+
+class MultiscaleConvolution(nn.Module):
+    def __init__(self, input_channels=63, input_time_length=1501, num_classes=2,
+                 kernel_sizes=(15, 25, 35, 45), total_time_channels=40):
+        """
+        Temporal convolution with different kernel sizes.
+
+
+        (An improved multi‑scale convolution and transformer network
+        for EEG‑based motor imagery decoding, Zhu et al.)
+        """
+
+        super().__init__()
+
+        assert total_time_channels % len(kernel_sizes) == 0, "total_time_channels must be divisible by number of kernel sizes"
+        branch_out = total_time_channels // len(kernel_sizes)
+
+        # Parallel temporal convs (1 x k) with 'same' padding on time axis
+        self.temporal_branches = nn.ModuleList([
+            nn.Conv2d(
+                in_channels=1,
+                out_channels=branch_out,
+                kernel_size=(1, k),
+                stride=1,
+                padding=(0, k // 2),
+                bias=False
+            ) for k in kernel_sizes
+        ])
+
+
+        self.conv_spat = nn.Conv2d(
+            in_channels=total_time_channels,
+            out_channels=total_time_channels,
+            kernel_size=(input_channels, 1),
+            stride=1,
+            bias=False
+        )
+
+        self.batch_norm = nn.BatchNorm2d(total_time_channels)
+        self.pooling = nn.AvgPool2d(kernel_size=(1, 75), stride=(1, 15))
+        self.classifier = nn.Linear(self._calculate_flatten_size(input_channels, input_time_length),
+                                    num_classes)
+
+    def _calculate_flatten_size(self, input_channels, input_time_length):
+        with torch.no_grad():
+            x = torch.zeros(1, input_channels, input_time_length)
+            x = x.unsqueeze(1)  # [1, 1, C, T]
+            # parallel temporal convs + concat
+            feats = [branch(x) for branch in self.temporal_branches]
+            x = torch.cat(feats, dim=1)  # [1, total_time_channels, C, T]
+            # spatial + rest identical to ShallowConvNet
+            x = self.conv_spat(x)
+            x = self.batch_norm(x)
+            x = x ** 2
+            x = self.pooling(x)
+            x = torch.log(torch.clamp(x, min=1e-6))
+            x = x.view(1, -1)
+            return x.shape[1]
+
+    def forward(self, x):
+        x = x.unsqueeze(1)  # [batch, 1, channels, time]
+        feats = [branch(x) for branch in self.temporal_branches]
+        x = torch.cat(feats, dim=1)  # [B, total_time_channels, C, T]
+        x = self.conv_spat(x)
+        x = self.batch_norm(x)
+        x = x ** 2
+        x = self.pooling(x)
+        x = torch.log(torch.clamp(x, min=1e-6))
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
+
+

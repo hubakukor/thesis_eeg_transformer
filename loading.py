@@ -123,7 +123,7 @@ def load_fif_data(data_dir, event_id, test_set=False):
         X_temp, X_test, Y_temp, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
         X_train, X_val, Y_train, Y_val = train_test_split(X_temp, Y_temp, test_size=0.2, random_state=42)
     else:
-        # First split into train, validation and test sets (0.64, 0.16, 0.20)
+        # First split into train and validation sets (0.80, 0.20)
         X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=0.2, random_state=42)
 
 
