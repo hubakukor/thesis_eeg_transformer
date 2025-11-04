@@ -163,78 +163,76 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 # Using cross validation, fine tune the pretrained_on_inv model on the global b dataset
 
 folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064"] #global b
-# folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064", "E065", "E066", "E067", "E068"] #global c
-
+# # folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064", "E065", "E066", "E067", "E068"] #global c
+#
 results = []
-
+#
 # Save predictions for confusion matrix
 all_preds_all_folds = []
 all_targets_all_folds = []
-
+#
 for target_folder in folder_names:
-    X_train, X_val, X_test, Y_train, Y_val, Y_test = load_for_complete_cross_validation(data_dir_b, event_id_b, target_folder)
+    X_train, X_val, X_test, Y_train, Y_val, Y_test = load_for_complete_cross_validation(data_dir_b, event_id_b, target_folder, augment_train_ratio=0.25)
     print(f"\n==== Training on all folders except '{target_folder}' ====")
-
-    # model = EEGTransformerModel(embedding_type='sinusoidal')
-    model = ShallowConvNet()
-    # model = MultiscaleConvolution()
-
-    # model = EEGConformer(
-    #     n_chans=63,  # number of EEG channels
-    #     n_classes=2,  # number of output classes
-    #     input_window_samples=1501,  # number of time samples in each window
-    #     sfreq=500,
-    #     final_fc_length="auto",  # length of the final fully connected layer
-    # )
-
-    # Load the weights of the pretrained model
-    # state_dict = torch.load("model_pretrained_on_inv_for_transfer.pth")
-    # model.load_state_dict(state_dict)
-    #
-
-    # #set the trainable layers in the conformer model
-    # for param in model.parameters():
-    #     param.requires_grad = False #freeze everything
-    #
-    # for name, param in model.named_parameters():
-    #     if (
-    #         "fc" in name or # last fully connected layer
-    #         "projection" in name or # last projection layer
-    #         "encoder.5" in name  # last encoder block
-    #     ):
-    #         param.requires_grad = True
-
-# #set the trainable layers in the eeg_transformer model
-#     # Freeze everything
-#     for param in model.parameters():
-#         param.requires_grad = False
 #
-#     # Unfreeze and reset classifier
-#     for param in model.fc.parameters():
-#         param.requires_grad = True
-#     # model.fc.reset_parameters()
+    model = EEGTransformerModel()
 #
-#     # unfreeze and reset projection layer
-#     for param in model.proj.parameters():
-#         param.requires_grad = True
-#     # model.proj.reset_parameters()
+#     # model = EEGConformer(
+#     #     n_chans=63,  # number of EEG channels
+#     #     n_classes=2,  # number of output classes
+#     #     input_window_samples=1501,  # number of time samples in each window
+#     #     sfreq=500,
+#     #     final_fc_length="auto",  # length of the final fully connected layer
+#     # )
 #
-#     # Unfreeze the last transformer layer
-#     for param in model.transformer.layers[-1].parameters():
-#         param.requires_grad = True
-
-    # #Unfreeze layers in the shallow convnet model
-    # model.classifier.reset_parameters()
-    # for param in model.classifier.parameters():
-    #     param.requires_grad = True
-    #
-    # #Unfreeze the spatial convolution layer
-    # for param in model.conv_spat.parameters():
-    #     param.requires_grad = True
-
-    # Create optimizer only for unfrozen params, lower learning rate
-    # optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0001)
-
+#     # Load the weights of the pretrained model
+#     # state_dict = torch.load("model_pretrained_on_inv_for_transfer.pth")
+#     # model.load_state_dict(state_dict)
+#     #
+#
+#     # #set the trainable layers in the conformer model
+#     # for param in model.parameters():
+#     #     param.requires_grad = False #freeze everything
+#     #
+#     # for name, param in model.named_parameters():
+#     #     if (
+#     #         "fc" in name or # last fully connected layer
+#     #         "projection" in name or # last projection layer
+#     #         "encoder.5" in name  # last encoder block
+#     #     ):
+#     #         param.requires_grad = True
+#
+# # #set the trainable layers in the eeg_transformer model
+# #     # Freeze everything
+# #     for param in model.parameters():
+# #         param.requires_grad = False
+# #
+# #     # Unfreeze and reset classifier
+# #     for param in model.fc.parameters():
+# #         param.requires_grad = True
+# #     # model.fc.reset_parameters()
+# #
+# #     # unfreeze and reset projection layer
+# #     for param in model.proj.parameters():
+# #         param.requires_grad = True
+# #     # model.proj.reset_parameters()
+# #
+# #     # Unfreeze the last transformer layer
+# #     for param in model.transformer.layers[-1].parameters():
+# #         param.requires_grad = True
+#
+#     # #Unfreeze layers in the shallow convnet model
+#     # model.classifier.reset_parameters()
+#     # for param in model.classifier.parameters():
+#     #     param.requires_grad = True
+#     #
+#     # #Unfreeze the spatial convolution layer
+#     # for param in model.conv_spat.parameters():
+#     #     param.requires_grad = True
+#
+#     # Create optimizer only for unfrozen params, lower learning rate
+#     # optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0001)
+#
     # Train
     train_model(model, X_train, Y_train, X_val, Y_val, epochs=50)
 
@@ -244,7 +242,7 @@ for target_folder in folder_names:
     # Accumulate all predictions
     all_preds_all_folds.extend(preds)
     all_targets_all_folds.extend(targets)
-
+#
     #Log results
     results.append({
         "test_folder": target_folder,
@@ -256,13 +254,13 @@ for target_folder in folder_names:
 #save the results into a csv file
 df = pd.DataFrame(results)
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-filename = f"cross_val_convnet_{timestamp}.xlsx"
+filename = f"transf_multiconv_augmented_train_{timestamp}.xlsx"
 filepath = os.path.join("results_xlsx", filename)
 df.to_excel(filepath, index=False)
-
-# Plot confusion matrix for all folds
-cm = confusion_matrix(all_targets_all_folds, all_preds_all_folds)
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Class 0", "Class 1"])
-disp.plot(cmap='Blues')
-plt.title("Confusion Matrix (Custom Model, All Folds)")
-plt.show()
+#
+# # Plot confusion matrix for all folds
+# cm = confusion_matrix(all_targets_all_folds, all_preds_all_folds)
+# disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Class 0", "Class 1"])
+# disp.plot(cmap='Blues')
+# plt.title("Confusion Matrix (Custom Model, All Folds)")
+# plt.show()

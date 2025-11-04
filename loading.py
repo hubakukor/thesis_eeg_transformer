@@ -151,7 +151,7 @@ def load_fif_data(data_dir, event_id, test_set=False):
     else:
         return X_train, X_val, Y_train, Y_val
 
-def load_for_complete_cross_validation(data_dir, event_id, test_folder):
+def load_for_complete_cross_validation(data_dir, event_id, test_folder, augment_train_ratio = 0):
     """
     Loads the data and splits it into training, validation, and test sets.
     The specified test folder will be used for testing, the rest is for training and validation.
@@ -160,6 +160,7 @@ def load_for_complete_cross_validation(data_dir, event_id, test_folder):
         data_dir (str): The directory containing the EEG data.
         event_id (dict): A dictionary mapping event names to their corresponding integer IDs.
         test_folder (str): The name of the folder containing the test data.
+        augment_train_ratio (float): The ratio of augmented samples to create. 0 means no augmentation.
 
     Returns:
         X_train, X_val, X_test, Y_train, Y_val, Y_test: Lists of numpy arrays containing the training, validation, and test data, and their corresponding labels.
@@ -227,6 +228,10 @@ def load_for_complete_cross_validation(data_dir, event_id, test_folder):
     # Split training and validation sets
     X_train, X_val, Y_train, Y_val = train_test_split(X_trainval, Y_trainval, test_size=0.2, random_state=42)
 
+    if augment_train_ratio != 0:
+        print('augmenting training data by mixing segments')
+        X_train, Y_train = augment_train_by_mixing(X_train, Y_train, aug_factor=augment_train_ratio)
+
     # One-hot encoding and conversion to class indices
     encoder = OneHotEncoder(sparse_output=False)
     Y_all = np.concatenate([Y_train, Y_val, Y_test]).reshape(-1, 1)
@@ -246,3 +251,51 @@ def load_for_complete_cross_validation(data_dir, event_id, test_folder):
     print("Test: ", dict(zip(*np.unique(Y_test.numpy(), return_counts=True))))
 
     return X_train, X_val, X_test, Y_train, Y_val, Y_test
+
+def augment_train_by_mixing(X, y, aug_factor=1.0, cut_range=(0.35, 0.65), seed=42):
+    """
+    Augment the training data by mixing segments of the real trials to create artificial trials.
+
+    X: np.ndarray [N, C, T]
+    y: np.ndarray [N] (integer class labels)
+    aug_factor: artificial/real ratio
+    cut_range: The point at which to cut a trial is randomly chosen in this range.
+    """
+    assert X.ndim == 3, "X must be [N, C, T]"
+    N, C, T = X.shape
+    rng = np.random.default_rng(seed)
+
+    n_aug = int(round(N * float(aug_factor))) # number of augmented samples to create
+    X_aug = np.empty((n_aug, C, T), dtype=X.dtype)
+    y_aug = np.empty((n_aug,), dtype=y.dtype)
+
+    # indices per class for quick same-class sampling
+    classes = np.unique(y)
+    idx_per_class = {c: np.flatnonzero(y == c) for c in classes}
+
+    for i in range(n_aug):
+        # choose a class to generate from
+        c = rng.choice(classes)
+        idxs = idx_per_class[c]
+
+        # pick two trials from that class
+        if len(idxs) >= 2:
+            i1, i2 = rng.choice(idxs, size=2, replace=False)
+        else:
+            i1 = i2 = idxs[0]
+
+        x1, x2 = X[i1], X[i2]
+
+        # choose a cut point
+        r = float(rng.uniform(cut_range[0], cut_range[1]))   #choose the cut ratio
+        cut = int(np.clip(round(T * r), 1, T - 1))  # exact cut point, ensure the cut point is inside the actual points-1
+
+        # new trial: beginning of x1 + end of x2 (same class → safe label)
+        X_aug[i] = np.concatenate([x1[:, :cut], x2[:, cut:]], axis=1)
+        y_aug[i] = c
+
+    # combine and shuffle
+    X_all = np.concatenate([X, X_aug], axis=0)
+    y_all = np.concatenate([y, y_aug], axis=0)
+    perm = rng.permutation(X_all.shape[0]) #randomly shuffle the training trials
+    return X_all[perm], y_all[perm]

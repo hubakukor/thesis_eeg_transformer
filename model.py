@@ -10,7 +10,7 @@ from positional_embedding import SinusoidalPositionalEmbedding, LearnablePositio
 
 # Define the model architecture
 class EEGTransformerModel(nn.Module):
-    def __init__(self, input_channels=63, seq_len=1501, d_model=128, nhead=4, num_encoder_layers=2, num_classes=2, embedding_type='none'):
+    def __init__(self, input_channels=63, seq_len=1501, d_model=128, nhead=4, num_encoder_layers=2, num_classes=2, embedding_type='sinusoidal', conv_block_type='multi'):
         """
         Class for the EEG Transformer model.
 
@@ -22,6 +22,7 @@ class EEGTransformerModel(nn.Module):
             num_encoder_layers (int): Number of encoder layers in the transformer.
             num_classes (int): Number of output classes for classification.
             embedding_type (str): Type of embedding to use. Options are 'sinusoidal', 'learnable', and 'none'.
+            conv_block_type (str): Changes the temporal convolution part. (multi: combines multiple kernel sizes, single: all kernels are the same size [25])
 
         returns:
             model: EEGTransformerModel instance.
@@ -29,14 +30,23 @@ class EEGTransformerModel(nn.Module):
         super(EEGTransformerModel, self).__init__()
 
         # CNN for local feature extraction
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=64, kernel_size=(1, 25), padding=(0, 12)),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=(input_channels, 1), padding=(0, 0)),
-            nn.BatchNorm2d(128),
-            nn.ReLU()
-        )
+        if conv_block_type == 'multi':
+            self.conv = MultiKernelTemporalSpatial(
+                input_channels=input_channels,
+                kernel_sizes=(17, 21, 25, 43, 51, 63),  # 6-kernel set
+                #kernel_sizes=(17, 25, 51, 101),  # 4-kernel set
+                total_time_channels=96,  # 16 ch per branch (96 % 6 == 0)
+                out_channels_after_spatial=128  # keep your original 128
+            )
+        elif conv_block_type == 'single':
+            self.conv = nn.Sequential(
+                nn.Conv2d(in_channels=1, out_channels=64, kernel_size=(1, 25), padding=(0, 12)),
+                nn.BatchNorm2d(64),
+                nn.ReLU(),
+                nn.Conv2d(64, 128, kernel_size=(input_channels, 1), padding=(0, 0)),
+                nn.BatchNorm2d(128),
+                nn.ReLU()
+            )
 
         # Linear projection to match Transformer input size
         self.proj = nn.Linear(128, d_model)
@@ -161,7 +171,7 @@ class ShallowConvNet(nn.Module):
 
 class MultiscaleConvolution(nn.Module):
     def __init__(self, input_channels=63, input_time_length=1501, num_classes=2,
-                 kernel_sizes=(15, 25, 35, 45), total_time_channels=40):
+                 kernel_sizes=(17, 21, 25, 43, 51, 63), total_time_channels=48):
         """
         Temporal convolution with different kernel sizes.
 
@@ -228,6 +238,44 @@ class MultiscaleConvolution(nn.Module):
         x = torch.log(torch.clamp(x, min=1e-6))
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
+        return x
+
+class MultiKernelTemporalSpatial(nn.Module):
+    """
+    Convolutional block for the main model.
+    Temporal covolution has multiple kernel with different sizes. Spatial convolution is unchanged.
+    """
+    def __init__(self, input_channels=63, kernel_sizes=(17, 21, 25, 43, 51, 63),
+                 total_time_channels=96, out_channels_after_spatial=128):
+        super().__init__()
+        assert total_time_channels % len(kernel_sizes) == 0, \
+            "total_time_channels must be divisible by number of kernel sizes"
+        branch_out = total_time_channels // len(kernel_sizes)
+        # parallel temporal convs with same-length time via padding
+        self.temporal_branches = nn.ModuleList([
+            nn.Conv2d(1, branch_out, kernel_size=(1, k), stride=1, padding=(0, k//2), bias=False)
+            for k in kernel_sizes
+        ])
+        self.bn_time = nn.BatchNorm2d(total_time_channels)
+        self.act_time = nn.ReLU(inplace=True)
+
+        # spatial conv collapses electrodes C -> 1 and expands channels to 128 (to match your model)
+        self.conv_spat = nn.Conv2d(
+            in_channels=total_time_channels,
+            out_channels=out_channels_after_spatial,
+            kernel_size=(input_channels, 1),
+            stride=1,
+            bias=False
+        )
+        self.bn_spat = nn.BatchNorm2d(out_channels_after_spatial)
+        self.act_spat = nn.ReLU(inplace=True)
+
+    def forward(self, x):  # x: [B, 1, C, T]
+        feats = [b(x) for b in self.temporal_branches]      # each: [B, branch_out, C, T]
+        x = torch.cat(feats, dim=1)                         # [B, total_time_channels, C, T]
+        x = self.act_time(self.bn_time(x))
+        x = self.conv_spat(x)                               # [B, 128, 1, T]
+        x = self.act_spat(self.bn_spat(x))
         return x
 
 
