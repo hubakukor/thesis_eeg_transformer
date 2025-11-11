@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
 import torch
+from scipy.stats import zscore
 
 #normalize the eeg signal between -1 and 1
 def normalize_epoch_minmax(epoch):
@@ -89,7 +90,10 @@ def load_fif_data(data_dir, event_id, test_set=False):
             epoch_data = epochs.get_data()  # EEG data (shape: n_epochs, n_channels, n_times)
 
             # Normalize each epoch between -1 and 1
-            epoch_data = np.array([normalize_epoch_minmax(e) for e in epoch_data])
+            # epoch_data = np.array([normalize_epoch_minmax(e) for e in epoch_data])
+
+            # Apply z-score normalization to each channel
+            epoch_data = np.array([np.nan_to_num(zscore(e, axis=1)) for e in epoch_data])
 
             # Map back to 0/1 using your event_id dictionary
             label_map = {v: event_id[k] for k, v in filtered_event_id.items()}
@@ -210,6 +214,9 @@ def load_for_complete_cross_validation(data_dir, event_id, test_folder, augment_
                 # Normalize each epoch between -1 and 1
                 epoch_data = np.array([normalize_epoch_minmax(e) for e in epoch_data])
 
+                # Apply z-score normalization to each channel in each epoch
+                # epoch_data = np.array([np.nan_to_num(zscore(e, axis=1)) for e in epoch_data])
+
                 label_map = {v: event_id[k] for k, v in filtered_event_id.items()}
                 labels = np.vectorize(label_map.get)(epochs.events[:, -1])
 
@@ -299,3 +306,102 @@ def augment_train_by_mixing(X, y, aug_factor=1.0, cut_range=(0.35, 0.65), seed=4
     y_all = np.concatenate([y, y_aug], axis=0)
     perm = rng.permutation(X_all.shape[0]) #randomly shuffle the training trials
     return X_all[perm], y_all[perm]
+
+
+def load_bci_dataset(data_folder, tmin=0.0, tmax=3.0):
+    """
+    Loads BCI Competition IV 2a dataset (both training and evaluation GDF files)
+
+    Args:
+        data_folder (str): Folder containing the A0xT.gdf and A0xE.gdf files.
+        tmin (float): Start time of epochs (in seconds).
+        tmax (float): End time of epochs (in seconds).
+
+    Returns:
+        X_train, Y_train, X_test, Y_test, X_val, Y_val : numpy arrays
+    """
+    motor_imagery_event_ids = {
+        "left_hand": 769,
+        "right_hand": 770,
+        "feet": 771,
+        "tongue": 772,
+    }
+
+    X_all, Y_all = [], []
+
+    for file in os.listdir(data_folder):
+        if not file.endswith("T.gdf"):
+            continue
+
+        file_path = os.path.join(data_folder, file)
+        print(f"\nProcessing file: {file_path}")
+        raw = mne.io.read_raw_gdf(file_path, preload=True)
+
+        # Drop EOG channels if they exist
+        for ch in ['EOG-left', 'EOG-central', 'EOG-right']:
+            if ch in raw.ch_names:
+                raw.drop_channels([ch])
+
+        # High-pass filter
+        raw.filter(l_freq=2.0, h_freq=None)
+
+        # Extract events
+        events, event_id = mne.events_from_annotations(raw)
+        motor_imagery_ids = [event_id.get(str(val)) for val in motor_imagery_event_ids.values()]
+        motor_imagery_ids = [e for e in motor_imagery_ids if e is not None]
+
+        if not motor_imagery_ids:
+            print(f"No valid motor imagery IDs in {file}")
+            continue
+
+        # Filter only MI events
+        mi_events = np.array([e for e in events if e[2] in motor_imagery_ids])
+        if len(mi_events) == 0:
+            print(f"No MI events in {file}")
+            continue
+
+        # Epoching
+        epochs = mne.Epochs(
+            raw, mi_events,
+            {key: event_id.get(str(val)) for key, val in motor_imagery_event_ids.items()},
+            tmin=tmin, tmax=tmax, baseline=None, preload=True
+        )
+        data = epochs.get_data()  # (n_epochs, n_channels, n_times)
+        labels = epochs.events[:, -1]
+
+        # Normalize each epoch
+        data = np.array([normalize_epoch_minmax(e) for e in data])
+
+        # Map event codes (7–10) → 1–4
+        label_mapping = {7: 0, 8: 1, 9: 2, 10: 3}
+        labels = np.array([label_mapping.get(y, -1) for y in labels])
+        valid = labels != -1
+        data, labels = data[valid], labels[valid]
+
+        X_all.append(data)
+        Y_all.append(labels)
+
+    # Concatenate all subjects
+    if X_all:
+        X_all = np.concatenate(X_all, axis=0)
+        Y_all = np.concatenate(Y_all, axis=0)
+    else:
+        print("No valid data found.")
+        return (np.empty((0,)),)*6
+
+    # Split into train/val/test: 80/10/10
+    X_train, X_temp, Y_train, Y_temp = train_test_split(X_all, Y_all, test_size=0.2, random_state=42, stratify=Y_all)
+    X_val, X_test, Y_val, Y_test = train_test_split(X_temp, Y_temp, test_size=0.5, random_state=42, stratify=Y_temp)
+
+    # Convert labels to torch tensors (for CrossEntropyLoss)
+    Y_train = torch.from_numpy(Y_train).long()
+    Y_val = torch.from_numpy(Y_val).long()
+    Y_test = torch.from_numpy(Y_test).long()
+
+    print(f"Train shape: {X_train.shape}, Val shape: {X_val.shape}, Test shape: {X_test.shape}")
+    print("Label distribution:")
+    print(f"  Train: {dict(zip(*np.unique(Y_train.numpy(), return_counts=True)))}")
+    print(f"  Val:   {dict(zip(*np.unique(Y_val.numpy(), return_counts=True)))}")
+    print(f"  Test:  {dict(zip(*np.unique(Y_test.numpy(), return_counts=True)))}")
+
+    return X_train, X_val, X_test, Y_train, Y_val, Y_test

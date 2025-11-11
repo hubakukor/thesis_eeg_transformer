@@ -33,10 +33,11 @@ class EEGTransformerModel(nn.Module):
         if conv_block_type == 'multi':
             self.conv = MultiKernelTemporalSpatial(
                 input_channels=input_channels,
-                kernel_sizes=(17, 21, 25, 43, 51, 63),  # 6-kernel set
-                #kernel_sizes=(17, 25, 51, 101),  # 4-kernel set
-                total_time_channels=96,  # 16 ch per branch (96 % 6 == 0)
-                out_channels_after_spatial=128  # keep your original 128
+                # kernel_sizes=(17, 21, 25, 43, 51, 63),  # 6-kernel set for cybathlon data
+                #kernel_sizes=(17, 25, 51, 101),  # 4-kernel set for cybathlon data
+                kernel_sizes = (11, 15, 21, 25, 31, 39), #6-kernel set for bci comp data
+                total_time_channels=96,  # 16 ch per branch
+                out_channels_after_spatial=128
             )
         elif conv_block_type == 'single':
             self.conv = nn.Sequential(
@@ -170,8 +171,8 @@ class ShallowConvNet(nn.Module):
 
 
 class MultiscaleConvolution(nn.Module):
-    def __init__(self, input_channels=63, input_time_length=1501, num_classes=2,
-                 kernel_sizes=(17, 21, 25, 43, 51, 63), total_time_channels=48):
+    def __init__(self, input_channels=22, input_time_length=751, num_classes=4,
+                 kernel_sizes=(11, 15, 21, 25, 31, 39), total_time_channels=48):
         """
         Temporal convolution with different kernel sizes.
 
