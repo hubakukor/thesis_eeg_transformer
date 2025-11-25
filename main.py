@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
 import numpy as np
-from loading import load_fif_data, load_for_complete_cross_validation, load_bci_dataset
+from loading import load_fif_data, load_for_complete_cross_validation, load_bci_dataset, load_physionet_eeg, make_default_split
 from train_validate import train_model, validate_model
 from model import EEGTransformerModel, ShallowConvNet, MultiscaleConvolution
 from collections import Counter
@@ -267,21 +267,64 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 # plt.show()
 
 
-# Train on bci dataset
-X_train, X_val, X_test, Y_train, Y_val, Y_test = load_bci_dataset(data_dir_bci)
+# # Train on bci dataset
+# X_train, X_val, X_test, Y_train, Y_val, Y_test = load_bci_dataset(data_dir_bci)
+#
+# # model = EEGTransformerModel(
+# #     input_channels=22,
+# #     seq_len=751,
+# #     num_classes=4
+# # )
+#
+# model = MultiscaleConvolution(
+#     input_channels=22,
+#     input_time_length=751,
+#     num_classes=4
+# )
+#
+# train_model(model, X_train, Y_train, X_val, Y_val)
+# print("Validate model")
+# validate_model(model, X_test, Y_test)
+
+# Path to folders with the data in dataset 1
+data_dir_physionet = r"datasets/eeg-motor-movementimagery-dataset-1.0.0/files"
+
+# all_subjects = sorted([
+#     d for d in os.listdir(data_dir_physionet)
+#     if os.path.isdir(os.path.join(data_dir_physionet, d))
+# ])
+#
+# subset_subjects = all_subjects[:30]   # or randomly select 30 if you want
+#
+# train_subj, val_subj, test_subj = make_default_split(subset_subjects)
+#
+# X_train, X_val, X_test, Y_train, Y_val, Y_test = load_physionet_eeg(
+#     data_dir_physionet,
+#     train_subjects=train_subj,
+#     val_subjects=val_subj,
+#     test_subjects=test_subj,
+# )
+
+X_train, X_val, X_test, Y_train, Y_val, Y_test = load_physionet_eeg(data_dir_physionet)
 
 # model = EEGTransformerModel(
-#     input_channels=22,
-#     seq_len=751,
-#     num_classes=4
+#     input_channels=64,
+#     seq_len=480,
+#     num_classes=5,
+#     d_model=64,
+#     nhead=4,
+#     num_encoder_layers=1,
+#     embedding_type='sinusoidal',
+#     conv_block_type='multi'
 # )
 
 model = MultiscaleConvolution(
-    input_channels=22,
-    input_time_length=751,
-    num_classes=4
+    input_channels=64,
+    input_time_length=480,
+    num_classes=5,
+    kernel_sizes=(5, 7, 9, 13, 17, 21),
+    total_time_channels=96
 )
 
 train_model(model, X_train, Y_train, X_val, Y_val)
-print("Validate model")
 validate_model(model, X_test, Y_test)

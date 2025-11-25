@@ -308,12 +308,12 @@ def augment_train_by_mixing(X, y, aug_factor=1.0, cut_range=(0.35, 0.65), seed=4
     return X_all[perm], y_all[perm]
 
 
-def load_bci_dataset(data_folder, tmin=0.0, tmax=3.0):
+def load_bci_dataset(data_dir, tmin=0.0, tmax=3.0):
     """
     Loads BCI Competition IV 2a dataset (both training and evaluation GDF files)
 
     Args:
-        data_folder (str): Folder containing the A0xT.gdf and A0xE.gdf files.
+        data_dir (str): Folder containing the A0xT.gdf and A0xE.gdf files.
         tmin (float): Start time of epochs (in seconds).
         tmax (float): End time of epochs (in seconds).
 
@@ -329,11 +329,11 @@ def load_bci_dataset(data_folder, tmin=0.0, tmax=3.0):
 
     X_all, Y_all = [], []
 
-    for file in os.listdir(data_folder):
+    for file in os.listdir(data_dir):
         if not file.endswith("T.gdf"):
             continue
 
-        file_path = os.path.join(data_folder, file)
+        file_path = os.path.join(data_dir, file)
         print(f"\nProcessing file: {file_path}")
         raw = mne.io.read_raw_gdf(file_path, preload=True)
 
@@ -393,7 +393,7 @@ def load_bci_dataset(data_folder, tmin=0.0, tmax=3.0):
     X_train, X_temp, Y_train, Y_temp = train_test_split(X_all, Y_all, test_size=0.2, random_state=42, stratify=Y_all)
     X_val, X_test, Y_val, Y_test = train_test_split(X_temp, Y_temp, test_size=0.5, random_state=42, stratify=Y_temp)
 
-    # Convert labels to torch tensors (for CrossEntropyLoss)
+    # Convert labels to torch tensors
     Y_train = torch.from_numpy(Y_train).long()
     Y_val = torch.from_numpy(Y_val).long()
     Y_test = torch.from_numpy(Y_test).long()
@@ -403,5 +403,199 @@ def load_bci_dataset(data_folder, tmin=0.0, tmax=3.0):
     print(f"  Train: {dict(zip(*np.unique(Y_train.numpy(), return_counts=True)))}")
     print(f"  Val:   {dict(zip(*np.unique(Y_val.numpy(), return_counts=True)))}")
     print(f"  Test:  {dict(zip(*np.unique(Y_test.numpy(), return_counts=True)))}")
+
+    return X_train, X_val, X_test, Y_train, Y_val, Y_test
+
+def fix_epoch_length(epoch_data, target_samples):
+    """Pad or trim epochs to the target number of samples."""
+    if epoch_data.shape[-1] > target_samples:
+        return epoch_data[:, :, :target_samples]
+    elif epoch_data.shape[-1] < target_samples:
+        padding = target_samples - epoch_data.shape[-1]
+        return np.pad(epoch_data, ((0, 0), (0, 0), (0, padding)), mode='constant')
+    return epoch_data
+
+
+def make_default_split(subjects, train_ratio=0.8, val_ratio=0.1, random_state=42):
+    """Produces default 80/10/10 split if user provides none."""
+    rng = np.random.RandomState(random_state)
+    subjects = sorted(subjects)
+    perm = rng.permutation(len(subjects))
+    subjects = [subjects[i] for i in perm]
+
+    n = len(subjects)
+    n_train = int(n * train_ratio)
+    n_val = int(n * val_ratio)
+    n_test = n - n_train - n_val
+
+    train_subj = subjects[:n_train]
+    val_subj   = subjects[n_train:n_train + n_val]
+    test_subj  = subjects[n_train + n_val:]
+
+    return train_subj, val_subj, test_subj
+
+def load_physionet_eeg(
+    data_dir,
+    train_subjects=None,
+    val_subjects=None,
+    test_subjects=None,
+    t_min=0.0,
+    t_max=3.0
+):
+    """
+    Load PhysioNet MI dataset with optional default subject split.
+
+    Final labels:
+        0 = rest
+        1 = left hand
+        2 = right hand
+        3 = both fists
+        4 = both feet
+
+    Args:
+        data_dir (str): Path to the PhysioNet EEG dataset folder.
+        train_subjects (list): List of subject folders to use for training.
+        val_subjects (list): List of subject folders to use for validation.
+        test_subjects (list): List of subject folders to use for testing.
+        t_min (float): Start time of epochs (in seconds).
+        t_max (float): End time of epochs (in seconds).
+
+    Returns:
+        X_train, X_val, X_test, Y_train, Y_val, Y_test
+    """
+
+    # Runs where T1/T2 mean both-fists / both-feet
+    BOTH_LIMBS_RUNS = [5, 6, 9, 10, 13, 14]
+    # Runs where T1 = left, T2 = right
+    LEFT_RIGHT_RUNS = [3, 4, 7, 8, 11, 12]
+
+    # Known nominal sampling rate for PhysioNet EEG (EEG channels)
+    SFREQ_TARGET = 160.0
+    target_samples = int((t_max - t_min) * SFREQ_TARGET)
+
+    # Get list of subjects (folders)
+    all_subjects = sorted([
+        d for d in os.listdir(data_dir)
+        if os.path.isdir(os.path.join(data_dir, d))
+    ])
+
+
+    if len(all_subjects) == 0:
+        raise RuntimeError("No subject folders found in PhysioNet dataset.")
+
+    # If no subjects given → compute default split
+    if train_subjects is None or val_subjects is None or test_subjects is None:
+        train_subjects, val_subjects, test_subjects = make_default_split(all_subjects)
+
+        print(f"Using default subject split:")
+        print(f" Train: {train_subjects}")
+        print(f" Val:   {val_subjects}")
+        print(f" Test:  {test_subjects}")
+
+    def load_from_subjects(subject_folders):
+        X_list, Y_list = [], []
+
+        for subject in subject_folders:
+            subject_path = os.path.join(data_dir, subject)
+            if not os.path.isdir(subject_path):
+                print(f"Warning: subject folder not found: {subject_path}")
+                continue
+
+            edf_files = [f for f in os.listdir(subject_path) if f.endswith('.edf')]
+
+            for edf_file in edf_files:
+                edf_path = os.path.join(subject_path, edf_file)
+
+                # Parse run number (R01 → 1)
+                try:
+                    run_number = int(edf_file.split("R")[1].split(".")[0])
+                except Exception:
+                    print(f"Skipping {edf_file}, cannot parse run number.")
+                    continue
+
+                print(f"Loading {edf_path} (run {run_number})...")
+
+                raw = mne.io.read_raw_edf(edf_path, preload=True, stim_channel='auto', verbose="ERROR")
+
+                sfreq = raw.info["sfreq"]
+                if abs(sfreq - SFREQ_TARGET) > 1e-3:
+                    print(f"Warning: sfreq={sfreq} Hz in {edf_file}, expected {SFREQ_TARGET} Hz. "
+                          f"Will pad/trim to {target_samples} samples without resampling.")
+
+                # Extract events
+                events, event_id = mne.events_from_annotations(raw, verbose="ERROR")
+
+                if not {"T0", "T1", "T2"}.issubset(event_id.keys()):
+                    print(f"Missing T0/T1/T2 in {edf_file}, skipping.")
+                    continue
+
+                code_T0, code_T1, code_T2 = event_id["T0"], event_id["T1"], event_id["T2"]
+
+                # Epochs
+                epochs = mne.Epochs(
+                    raw,
+                    events,
+                    event_id={"T0": code_T0, "T1": code_T1, "T2": code_T2},
+                    tmin=t_min,
+                    tmax=t_max,
+                    baseline=None,
+                    preload=True,
+                    verbose="ERROR"
+                )
+
+                epoch_data = epochs.get_data()
+                labels_raw = epochs.events[:, -1]
+
+                # Assign final semantic labels
+                labels = np.full_like(labels_raw, -1)
+
+                # T0 = rest
+                labels[labels_raw == code_T0] = 0
+
+                if run_number in BOTH_LIMBS_RUNS:
+                    labels[labels_raw == code_T1] = 3
+                    labels[labels_raw == code_T2] = 4
+                elif run_number in LEFT_RIGHT_RUNS:
+                    labels[labels_raw == code_T1] = 1
+                    labels[labels_raw == code_T2] = 2
+                else:
+                    print(f"Unknown run {run_number}, skipping.")
+                    continue
+
+                valid = labels != -1
+                if not np.any(valid):
+                    continue
+
+                epoch_data = epoch_data[valid]
+                labels = labels[valid]
+
+                # Enforce *global* target_samples for all data
+                epoch_data = fix_epoch_length(epoch_data, target_samples)
+                epoch_data = np.array([normalize_epoch_minmax(e) for e in epoch_data])
+
+                X_list.append(epoch_data)
+                Y_list.append(labels)
+
+        if not X_list:
+            return np.empty((0,)), np.empty((0,))
+
+        X = np.concatenate(X_list, axis=0)
+        Y = np.concatenate(Y_list, axis=0)
+        return X, Y
+
+    # Load each set
+    X_train, Y_train = load_from_subjects(train_subjects)
+    X_val, Y_val = load_from_subjects(val_subjects)
+    X_test, Y_test = load_from_subjects(test_subjects)
+
+    # To torch labels
+    Y_train = torch.from_numpy(Y_train).long()
+    Y_val = torch.from_numpy(Y_val).long()
+    Y_test = torch.from_numpy(Y_test).long()
+
+    print("\nFinal dataset shapes:")
+    print(f" Train: {X_train.shape}, labels: {Y_train.shape}")
+    print(f" Val:   {X_val.shape},   labels: {Y_val.shape}")
+    print(f" Test:  {X_test.shape},  labels: {Y_test.shape}")
 
     return X_train, X_val, X_test, Y_train, Y_val, Y_test
