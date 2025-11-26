@@ -308,7 +308,7 @@ def augment_train_by_mixing(X, y, aug_factor=1.0, cut_range=(0.35, 0.65), seed=4
     return X_all[perm], y_all[perm]
 
 
-def load_bci_dataset(data_dir, tmin=0.0, tmax=3.0):
+def load_bci_dataset(data_dir, tmin=0.0, tmax=4.0):
     """
     Loads BCI Competition IV 2a dataset (both training and evaluation GDF files)
 
@@ -337,7 +337,7 @@ def load_bci_dataset(data_dir, tmin=0.0, tmax=3.0):
         print(f"\nProcessing file: {file_path}")
         raw = mne.io.read_raw_gdf(file_path, preload=True)
 
-        # Drop EOG channels if they exist
+        # Drop EOG channels
         for ch in ['EOG-left', 'EOG-central', 'EOG-right']:
             if ch in raw.ch_names:
                 raw.drop_channels([ch])

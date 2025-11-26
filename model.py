@@ -35,8 +35,8 @@ class EEGTransformerModel(nn.Module):
                 input_channels=input_channels,
                 # kernel_sizes=(17, 21, 25, 43, 51, 63),  # 6-kernel set for cybathlon data
                 #kernel_sizes=(17, 25, 51, 101),  # 4-kernel set for cybathlon data
-                # kernel_sizes = (11, 15, 21, 25, 31, 39), #6-kernel set for bci comp data
-                kernel_sizes = (5, 7, 9, 13, 17, 21), #6-kernel set for physionet data
+                kernel_sizes = (11, 15, 21, 25, 31, 39), #6-kernel set for bci comp data
+                # kernel_sizes = (5, 7, 9, 13, 17, 21), #6-kernel set for physionet data
                 total_time_channels=96,  # 16 ch per branch
                 out_channels_after_spatial=128
             )
@@ -102,6 +102,7 @@ class EEGTransformerModel(nn.Module):
         x = x.permute(1, 0, 2)
         # Mean pooling over time (seq_len)
         x = x.mean(dim=1)  # → [batch, d_model]
+
         # Final classification
         x = self.fc(x)  # → [batch, num_classes]
 

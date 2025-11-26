@@ -7,6 +7,7 @@ import torch.optim as optim
 import numpy as np
 from loading import load_fif_data, load_for_complete_cross_validation, load_bci_dataset, load_physionet_eeg, make_default_split
 from train_validate import train_model, validate_model
+from datasets import BCIV2aTrialsDataset, BCIV2aCroppedDataset, BCIV2aFixedCenterCropDataset, train_model_datasets, evaluate_model_multicrop
 from model import EEGTransformerModel, ShallowConvNet, MultiscaleConvolution
 from collections import Counter
 import pandas as pd
@@ -23,6 +24,7 @@ data_dir_c = r"D:\suli\thesis\par2024_two_cmd_c_global\par2024_two_cmd_c_global"
 data_dir_b = r"D:\suli\thesis\par2024_two_cmd_b_global\par2024_two_cmd_b_global"
 data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
 data_dir_bci = r"datasets/BCICIV_2a_gdf"
+data_dir_physionet = r"datasets/eeg-motor-movementimagery-dataset-1.0.0/files"
 
 #event libraries:
 
@@ -286,8 +288,7 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 # print("Validate model")
 # validate_model(model, X_test, Y_test)
 
-# Path to folders with the data in dataset 1
-data_dir_physionet = r"datasets/eeg-motor-movementimagery-dataset-1.0.0/files"
+
 
 # all_subjects = sorted([
 #     d for d in os.listdir(data_dir_physionet)
@@ -305,26 +306,52 @@ data_dir_physionet = r"datasets/eeg-motor-movementimagery-dataset-1.0.0/files"
 #     test_subjects=test_subj,
 # )
 
-X_train, X_val, X_test, Y_train, Y_val, Y_test = load_physionet_eeg(data_dir_physionet)
-
-# model = EEGTransformerModel(
-#     input_channels=64,
-#     seq_len=480,
-#     num_classes=5,
-#     d_model=64,
-#     nhead=4,
-#     num_encoder_layers=1,
-#     embedding_type='sinusoidal',
-#     conv_block_type='multi'
-# )
-
-model = MultiscaleConvolution(
-    input_channels=64,
-    input_time_length=480,
-    num_classes=5,
-    kernel_sizes=(5, 7, 9, 13, 17, 21),
-    total_time_channels=96
+X_train, X_val, X_test, Y_train, Y_val, Y_test = load_bci_dataset(
+    data_dir=data_dir_bci,
+    tmin=0.0,
+    tmax=4.0,
 )
 
-train_model(model, X_train, Y_train, X_val, Y_val)
-validate_model(model, X_test, Y_test)
+CROP_LEN=500
+
+# Training: random-crop dataset
+train_ds_B = BCIV2aCroppedDataset(
+    X_train,
+    Y_train,
+    crop_len=CROP_LEN,
+    n_crops_per_trial=10,
+)
+
+# Validation: still center window
+val_ds_B = BCIV2aFixedCenterCropDataset(X_val, Y_val, crop_len=CROP_LEN)
+
+model_B = EEGTransformerModel(
+    input_channels=22,
+    seq_len=500,
+    num_classes=4,
+    d_model=64,
+    nhead=4,
+    num_encoder_layers=1,
+    embedding_type='sinusoidal',
+    conv_block_type='multi'
+)
+
+model_B = train_model_datasets(
+    model=model_B,
+    train_dataset=train_ds_B,
+    val_dataset=val_ds_B,
+    epochs=50,
+    lr=5e-4,
+    patience=5,
+    batch_size_train=8,
+    batch_size_val=8,
+)
+
+test_loss_B, test_acc_B, test_bal_acc_B = evaluate_model_multicrop(
+    model=model_B,
+    X=X_test,
+    Y=Y_test,
+    crop_len=CROP_LEN,
+    n_crops=5,               # e.g. crops at 0,125,250,375,500
+    plot_confusion_matrix=True,
+)
