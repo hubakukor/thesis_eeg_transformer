@@ -328,6 +328,7 @@ def load_bci_dataset(data_dir, tmin=0.0, tmax=4.0):
     }
 
     X_all, Y_all = [], []
+    bci_channels = None
 
     for file in os.listdir(data_dir):
         if not file.endswith("T.gdf"):
@@ -341,6 +342,11 @@ def load_bci_dataset(data_dir, tmin=0.0, tmax=4.0):
         for ch in ['EOG-left', 'EOG-central', 'EOG-right']:
             if ch in raw.ch_names:
                 raw.drop_channels([ch])
+
+        # Save channel names once
+        if bci_channels is None:
+            bci_channels = raw.ch_names.copy()
+            print("Detected BCI EEG channels:", bci_channels)
 
         # High-pass filter
         raw.filter(l_freq=2.0, h_freq=None)
@@ -404,7 +410,7 @@ def load_bci_dataset(data_dir, tmin=0.0, tmax=4.0):
     print(f"  Val:   {dict(zip(*np.unique(Y_val.numpy(), return_counts=True)))}")
     print(f"  Test:  {dict(zip(*np.unique(Y_test.numpy(), return_counts=True)))}")
 
-    return X_train, X_val, X_test, Y_train, Y_val, Y_test
+    return X_train, X_val, X_test, Y_train, Y_val, Y_test, bci_channels
 
 def fix_epoch_length(epoch_data, target_samples):
     """Pad or trim epochs to the target number of samples."""
@@ -593,11 +599,11 @@ def load_physionet_eeg(
                           f"(target_samples={target_samples})")
                     printed_info = True
 
-                # If off-by-one etc., pad/trim (if you still have fix_epoch_length defined)
+                # If off-by-one etc., pad/trim
                 if epoch_data.shape[-1] != target_samples:
                     epoch_data = fix_epoch_length(epoch_data, target_samples)
 
-                # Normalization (you can swap to z-score if you want)
+                # Normalization
                 epoch_data = np.array([normalize_epoch_minmax(e) for e in epoch_data])
 
                 X_list.append(epoch_data)
@@ -630,3 +636,75 @@ def load_physionet_eeg(
     Y_test  = torch.from_numpy(Y_test).long()
 
     return X_train, X_val, X_test, Y_train, Y_val, Y_test, ch_names
+
+def _normalize_ch_name(ch):
+    """Helper: normalize channel names so 'Fz', 'Fz.', 'Fz..' all map to 'fz'."""
+    return ch.lower().replace('.', '').strip()
+
+
+def match_common_channels(data, current_channels, target_channels, verbose=True):
+    """
+    Reorder EEG data to the intersection of current_channels and target_channels.
+    Channels that exist only in one of the lists are dropped.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        EEG data of shape (n_epochs, n_channels, n_times).
+    current_channels : list of str
+        Names of channels in `data` (original dataset).
+    target_channels : list of str
+        Desired channel order / reference montage.
+    verbose : bool
+        If True, prints which channels are kept/dropped.
+
+    Returns
+    -------
+    data_out : np.ndarray
+        EEG data with only common channels, shape (n_epochs, n_common, n_times),
+        ordered according to `target_channels`.
+    common_channels : list of str
+        List of channel names in the output (subset of target_channels).
+    """
+
+    # Normalize names
+    current_norm = [_normalize_ch_name(ch) for ch in current_channels]
+    target_norm = [_normalize_ch_name(ch) for ch in target_channels]
+
+    # Map normalized -> index in current data
+    current_idx_map = {name: i for i, name in enumerate(current_norm)}
+
+    # Find intersection, in the order of target_channels
+    common_indices = []
+    common_channels = []
+    missing_in_current = []
+    for tgt_raw, tgt_norm in zip(target_channels, target_norm):
+        if tgt_norm in current_idx_map:
+            idx = current_idx_map[tgt_norm]
+            common_indices.append(idx)
+            common_channels.append(tgt_raw)  # keep target naming
+        else:
+            missing_in_current.append(tgt_raw)
+
+    if verbose:
+        print(f"Total channels in current data: {len(current_channels)}")
+        print(f"Total channels in target list: {len(target_channels)}")
+        print(f"Common channels kept: {len(common_channels)}")
+        print("Kept:", common_channels)
+        if missing_in_current:
+            print("Dropped (only in target, not in current):", missing_in_current)
+
+        # Also check if some current channels are not in target
+        target_norm_set = set(target_norm)
+        extra_in_current = [ch for ch, norm in zip(current_channels, current_norm)
+                            if norm not in target_norm_set]
+        if extra_in_current:
+            print("Dropped (only in current, not in target):", extra_in_current)
+
+    if len(common_indices) == 0:
+        raise ValueError("No overlapping channels between current and target channel lists.")
+
+    # Select only the common channels from the current data
+    data_out = data[:, common_indices, :]  # (n_epochs, n_common, n_times)
+
+    return data_out, common_channels

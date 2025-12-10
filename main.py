@@ -5,9 +5,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchsummary import summary
 import torch.optim as optim
 import numpy as np
-from loading import load_fif_data, load_for_complete_cross_validation, load_bci_dataset, load_physionet_eeg, make_default_split
-from train_validate import train_model, validate_model
-from datasets import EEGTrialsDataset, EEGCroppedDataset, EEGFixedCenterCropDataset, train_model_datasets, evaluate_model_multicrop
+from loading import load_fif_data, load_for_complete_cross_validation, load_bci_dataset, load_physionet_eeg, make_default_split, match_common_channels
+from train_validate import train_model, evaluate_model
+from datasets import EEGTrialsDataset, EEGCroppedDataset, EEGFixedCenterCropDataset
 from model import EEGTransformerModel, ShallowConvNet, MultiscaleConvolution
 from collections import Counter
 import pandas as pd
@@ -52,208 +52,6 @@ data_dir_physionet = r"datasets/eeg-motor-movementimagery-dataset-1.0.0/files"
 # event_id_c = {k: v for k, v in event_id_inv.items() if k in ['Stimulus/13', 'Stimulus/15']}
 
 
-# #load data into train and test sets
-# X_train_c, X_val_c, X_test_c, Y_train_c, Y_val_c, Y_test_c = load_fif_data(data_dir_c, event_id_c)
-
-# X_train_b, X_val_b, X_test_b, Y_train_b, Y_val_b, Y_test_b = load_fif_data(data_dir_b, event_id_b, test_set=True)
-
-
-# X_train_inv, X_val_inv, X_test_inv, Y_train_inv, Y_val_inv, Y_test_inv = load_fif_data(data_dir_inv, event_id_b, test_set=True)
-# X_train_inv, X_val_inv, Y_train_inv, Y_val_inv = load_fif_data(data_dir_inv, event_id_b, test_set=False)
-
-
-# Info about the number of events loaded
-'''
-#print info about the loaded data
-print("Dataset C:", X_train_c.shape[0] + X_test_c.shape[0], "epochs")
-print("Dataset B:", X_train_b.shape[0] + X_test_b.shape[0], "epochs")
-print("Dataset Inv:", X_train_inv.shape[0] + X_test_inv.shape[0], "epochs")
-
-print("C labels:", torch.unique(Y_train_C, return_counts=True))
-print("B labels:", torch.unique(Y_train_B, return_counts=True))
-print("Inv labels:", torch.unique(Y_train_Inv, return_counts=True))
-
-print("Shape C:", X_train_c.shape, X_test_c.shape)
-print("Shape B:", X_train_b.shape, X_test_b.shape)
-print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
-'''
-
-# Train the model on global b
-# Define model
-# model_b = MultiscaleConvolution()
-
-
-# train_model(model_b, X_train_b, Y_train_b, X_val_b, Y_val_b)
-#torch.save(model_b.state_dict(), "model_trained_on_global_b.pth")
-
-#validate
-
-
-
-
-
-#Train on c
-#Define model
-# model_c = EEGTransformerModel(embedding_type='sinusoidal')
-# train_model(model_c, X_train_c, Y_train_c, X_val_c, Y_val_c, epochs=50, lr=0.0005, noise_augmentation=0.0)
-# torch.save(model_c.state_dict(), "model_trained_on_global_c.pth")
-# # print("Trained on dataset c with no embedding")
-# print("Validate model c")
-# validate_model(model_c, X_test_c, Y_test_c)
-
-# # #Train on inv
-# # #Define model
-# model_inv = EEGTransformerModel(num_classes = len(event_id_inv), embedding_type='sinusoidal')
-# train_model(model_inv, X_train_inv, Y_train_inv, epochs=20, lr=0.0005)
-# #torch.save(model_inv.state_dict(), "model_trained_on_global_inv.pth")
-#
-# print("Validate model inv on dataset inv")
-# validate_model(model_inv, X_test_inv, Y_test_inv)
-
-# pretrain on inv
-
-# model_convnet = ShallowConvNet()
-# model = EEGTransformerModel(embedding_type='sinusoidal')
-# train_model(model, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=50, lr=0.0005)
-# print("Trained on inv")
-# torch.save(model.state_dict(), "model_pretrained_on_inv_for_transfer.pth")
-
-# model_conformer = EEGConformer(
-#     n_chans=63,          # number of EEG channels
-#     n_classes=2,          # number of output classes
-#     input_window_samples=1501,  # number of time samples in each window
-#     sfreq=500,
-#     final_fc_length="auto",  # length of the final fully connected layer
-# )
-# train_model(model_conformer, X_train_inv, Y_train_inv, X_val_inv, Y_val_inv, epochs=50, lr=0.0005)
-# torch.save(model_conformer.state_dict(), "conformer_pretrained_on_inv_for_transfer.pth")
-
-# print("Validate model before transfer learning")
-# validate_model(model_inv, X_test_c, Y_test_c)
-#
-#
-# # Freeze everything
-# for param in model_inv.parameters():
-#     param.requires_grad = False
-#
-# # Unfreeze and reset classifier
-# for param in model_inv.fc.parameters():
-#     param.requires_grad = True
-# model_inv.fc.reset_parameters()
-#
-# # unfreeze and reset projection layer
-# for param in model_inv.proj.parameters():
-#     param.requires_grad = True
-# model_inv.proj.reset_parameters()
-#
-# # Unfreeze the last transformer layer
-# for param in model_inv.transformer.layers[-1].parameters():
-#     param.requires_grad = True
-#
-# # Create optimizer only for unfrozen params, lower learning rate
-# optimizer = optim.Adam(filter(lambda p: p.requires_grad, model_inv.parameters()), lr=0.0001)
-#
-# # Train
-# train_model(model_inv, X_train_c, Y_train_c, X_val_c, Y_val_c, epochs=10, optimizer=optimizer)
-# # torch.save(model_inv.state_dict(), "model_transfer_inv_to_b.pth")
-#
-# print("Validate model after transfer learning")
-# validate_model(model_inv, X_test_c, Y_test_c)
-# print("Validate model inv on global c")
-# validate_model(model_inv, X_test_c, Y_test_c)
-
-
-# Using cross validation, fine tune the pretrained_on_inv model on the global b dataset
-
-# folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064"] #global b
-# # # folder_names = ["E055", "E056", "E057", "E058", "E059", "E060", "E061", "E062", "E063", "E064", "E065", "E066", "E067", "E068"] #global c
-# #
-# results = []
-# #
-# # Save predictions for confusion matrix
-# all_preds_all_folds = []
-# all_targets_all_folds = []
-# #
-# for target_folder in folder_names:
-#     X_train, X_val, X_test, Y_train, Y_val, Y_test = load_for_complete_cross_validation(data_dir_b, event_id_b, target_folder)
-#     print(f"\n==== Training on all folders except '{target_folder}' ====")
-# #
-#     model = EEGTransformerModel()
-# #
-# #     # model = EEGConformer(
-# #     #     n_chans=63,  # number of EEG channels
-# #     #     n_classes=2,  # number of output classes
-# #     #     input_window_samples=1501,  # number of time samples in each window
-# #     #     sfreq=500,
-# #     #     final_fc_length="auto",  # length of the final fully connected layer
-# #     # )
-# #
-# #     # Load the weights of the pretrained model
-# #     # state_dict = torch.load("model_pretrained_on_inv_for_transfer.pth")
-# #     # model.load_state_dict(state_dict)
-# #     #
-# #
-# #     # #set the trainable layers in the conformer model
-# #     # for param in model.parameters():
-# #     #     param.requires_grad = False #freeze everything
-# #     #
-# #     # for name, param in model.named_parameters():
-# #     #     if (
-# #     #         "fc" in name or # last fully connected layer
-# #     #         "projection" in name or # last projection layer
-# #     #         "encoder.5" in name  # last encoder block
-# #     #     ):
-# #     #         param.requires_grad = True
-# #
-# # # #set the trainable layers in the eeg_transformer model
-# # #     # Freeze everything
-# # #     for param in model.parameters():
-# # #         param.requires_grad = False
-# # #
-# # #     # Unfreeze and reset classifier
-# # #     for param in model.fc.parameters():
-# # #         param.requires_grad = True
-# # #     # model.fc.reset_parameters()
-# # #
-# # #     # unfreeze and reset projection layer
-# # #     for param in model.proj.parameters():
-# # #         param.requires_grad = True
-# # #     # model.proj.reset_parameters()
-# # #
-# # #     # Unfreeze the last transformer layer
-# # #     for param in model.transformer.layers[-1].parameters():
-# # #         param.requires_grad = True
-# #
-# #     # #Unfreeze layers in the shallow convnet model
-# #     # model.classifier.reset_parameters()
-# #     # for param in model.classifier.parameters():
-# #     #     param.requires_grad = True
-# #     #
-# #     # #Unfreeze the spatial convolution layer
-# #     # for param in model.conv_spat.parameters():
-# #     #     param.requires_grad = True
-# #
-# #     # Create optimizer only for unfrozen params, lower learning rate
-# #     # optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0001)
-# #
-#     # Train
-#     train_model(model, X_train, Y_train, X_val, Y_val)
-#
-#     print("Test model")
-#     val_loss, val_acc, val_bal_acc, preds, targets = validate_model(model, X_test, Y_test, return_preds_targets=True)
-#
-#     # Accumulate all predictions
-#     all_preds_all_folds.extend(preds)
-#     all_targets_all_folds.extend(targets)
-# #
-#     #Log results
-#     results.append({
-#         "test_folder": target_folder,
-#         "accuracy": val_acc,
-#         "balanced_accuracy": val_bal_acc,
-#         "loss": val_loss
-#     })
-#
 # #save the results into a csv file
 # df = pd.DataFrame(results)
 # timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -261,97 +59,165 @@ print("Shape Inv:", X_train_inv.shape, X_test_inv.shape)
 # filepath = os.path.join("results_xlsx", filename)
 # df.to_excel(filepath, index=False)
 #
-# # Plot confusion matrix for all folds
-# cm = confusion_matrix(all_targets_all_folds, all_preds_all_folds)
-# disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Class 0", "Class 1"])
-# disp.plot(cmap='Blues')
-# plt.title("Confusion Matrix (Custom Model, All Folds)")
-# plt.show()
+
+BCI_CANONICAL_CHANNELS = [
+    "Fz", "FC3", "FC1", "FCz", "FC2", "FC4",
+    "C5", "C3", "C1", "Cz", "C2", "C4", "C6",
+    "CP3", "CP1", "CPz", "CP2", "CP4",
+    "P1", "Pz", "P2", "POz"
+]
+
+def make_eeg_transformer(input_channels, seq_len, num_classes):
+    return EEGTransformerModel(
+        input_channels=input_channels,
+        seq_len=seq_len,
+        num_classes=num_classes,
+        d_model=64,
+        nhead=4,
+        num_encoder_layers=1,
+        embedding_type='sinusoidal',
+        conv_block_type='multi',
+    )
 
 
-# # Train on bci dataset
-# X_train, X_val, X_test, Y_train, Y_val, Y_test = load_bci_dataset(data_dir_bci)
-#
-# # model = EEGTransformerModel(
-# #     input_channels=22,
-# #     seq_len=751,
-# #     num_classes=4
-# # )
-#
-# model = MultiscaleConvolution(
-#     input_channels=22,
-#     input_time_length=751,
-#     num_classes=4
-# )
-#
-# train_model(model, X_train, Y_train, X_val, Y_val)
-# print("Validate model")
-# validate_model(model, X_test, Y_test)
+def main():
+
+    # ----------------------------------------------------
+    # 0) Infer seq_len from Physio checkpoint (for fair comparison)
+    # ----------------------------------------------------
+    print("=== Loading Physio pretrained weights to infer seq_len (for baseline) ===")
+    state_dict = torch.load("physio_pretrained_fulltrials.pt", map_location="cpu")
+    pretrained_seq_len = state_dict["positional_embedding.pe"].shape[0]
+    print(f"Pretrained seq_len (Physio) = {pretrained_seq_len}")
+
+    # ----------------------------------------------------
+    # 1) Load BCI data (4 s epochs)
+    # ----------------------------------------------------
+    print("\n=== Loading BCI dataset (full 4 s trials) ===")
+    X_tr, X_val, X_te, y_tr, y_val, y_te, bci_ch_names = load_bci_dataset(
+        data_dir=data_dir_bci,
+        tmin=0.0,
+        tmax=4.0,
+    )
+
+    print("BCI shapes BEFORE time-length alignment:")
+    print("  Train:", X_tr.shape)
+    print("  Val:  ", X_val.shape)
+    print("  Test: ", X_te.shape)
+    print("  Channels:", len(bci_ch_names), bci_ch_names)
+
+    input_channels = X_tr.shape[1]
+    bci_seq_len = X_tr.shape[2]
+    print(f"BCI seq_len: {bci_seq_len}, Physio seq_len: {pretrained_seq_len}")
+
+    # ----------------------------------------------------
+    # 2) Align BCI time length to pretrained_seq_len
+    # ----------------------------------------------------
+    def fix_time_len(X, target_len):
+        N, C, T = X.shape
+        if T == target_len:
+            return X
+        elif T > target_len:
+            # Trim at the end
+            return X[:, :, :target_len]
+        else:
+            # Pad with zeros at the end (unlikely here)
+            pad_width = target_len - T
+            pad = np.zeros((N, C, pad_width), dtype=X.dtype)
+            return np.concatenate([X, pad], axis=2)
+
+    X_tr = fix_time_len(X_tr, pretrained_seq_len)
+    X_val = fix_time_len(X_val, pretrained_seq_len)
+    X_te = fix_time_len(X_te, pretrained_seq_len)
+
+    print("\nBCI shapes AFTER time-length alignment:")
+    print("  Train:", X_tr.shape)
+    print("  Val:  ", X_val.shape)
+    print("  Test: ", X_te.shape)
+
+    # ----------------------------------------------------
+    # 3) Filter to overlapping 3 classes: 0,1,2 (drop tongue=3)
+    # ----------------------------------------------------
+    print("\n=== Filtering BCI to 3 classes (left/right/feet) ===")
+
+    def filter_3classes(X, y):
+        mask = (y != 3).cpu().numpy().astype(bool)  # keep 0,1,2
+        X_f = X[mask]
+        y_f = y[mask]
+        return X_f, y_f
+
+    X_tr_3, y_tr_3 = filter_3classes(X_tr, y_tr)
+    X_val_3, y_val_3 = filter_3classes(X_val, y_val)
+    X_te_3, y_te_3 = filter_3classes(X_te, y_te)
+
+    print("BCI shapes AFTER class filtering:")
+    print("  Train:", X_tr_3.shape, "labels:", y_tr_3.shape)
+    print("  Val:  ", X_val_3.shape, "labels:", y_val_3.shape)
+    print("  Test: ", X_te_3.shape, "labels:", y_te_3.shape)
+
+    # Label codes 0/1/2 already match Physio (left/right/feet).
+
+    # ----------------------------------------------------
+    # 4) Build full-trial TensorDatasets (no crops)
+    # ----------------------------------------------------
+    print("\n=== Building BCI TensorDatasets (full 4 s trials, 3 classes) ===")
+    train_X_tensor = torch.from_numpy(X_tr_3).float()
+    val_X_tensor   = torch.from_numpy(X_val_3).float()
+
+    train_dataset = TensorDataset(train_X_tensor, y_tr_3)
+    val_dataset   = TensorDataset(val_X_tensor,   y_val_3)
+
+    # ----------------------------------------------------
+    # 5) Init BCI model FROM SCRATCH (no pretraining)
+    # ----------------------------------------------------
+    print("\n=== Initializing 3-class BCI model (no pretraining) ===")
+    N_CLASSES = 3
+
+    model_bci = make_eeg_transformer(
+        input_channels=input_channels,
+        seq_len=pretrained_seq_len,  # same as transfer model
+        num_classes=N_CLASSES,
+    )
+
+    # IMPORTANT: do NOT load Physio weights here.
+    # This is your baseline.
+
+    # ----------------------------------------------------
+    # 6) Train on BCI-only (full fine-tuning)
+    # ----------------------------------------------------
+    print("\n=== Training BCI 3-class baseline (full trials) ===")
+    model_bci = train_model(
+        model=model_bci,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        epochs=50,
+        lr=5e-4,
+        patience=5,
+        batch_size_train=8,
+        batch_size_val=8,
+    )
+
+    torch.save(model_bci.state_dict(), "bci_baseline_3class_fulltrials.pt")
+    print("\nSaved BCI-only baseline model to bci_baseline_3class_fulltrials.pt")
+
+    # ----------------------------------------------------
+    # 7) Final evaluation on BCI 3-class test set
+    # ----------------------------------------------------
+    print("\n=== Final evaluation on BCI 3-class baseline (full trials) ===")
+    test_loss, test_acc, test_bal_acc = evaluate_model(
+        model=model_bci,
+        X=X_te_3,
+        Y=y_te_3,
+        crop_len=pretrained_seq_len,  # full trial
+        n_crops=1,
+        plot_confusion_matrix=True,
+    )
+
+    print(f"BCI 3-class baseline (no pretraining) - "
+          f"Test Loss: {test_loss:.4f}, "
+          f"Acc: {test_acc:.4f}, "
+          f"BalAcc: {test_bal_acc:.4f}")
 
 
-
-# all_subjects = sorted([
-#     d for d in os.listdir(data_dir_physionet)
-#     if os.path.isdir(os.path.join(data_dir_physionet, d))
-# ])
-#
-# subset_subjects = all_subjects[:30]   # or randomly select 30 if you want
-#
-# train_subj, val_subj, test_subj = make_default_split(subset_subjects)
-#
-# X_train, X_val, X_test, Y_train, Y_val, Y_test = load_physionet_eeg(
-#     data_dir_physionet,
-#     train_subjects=train_subj,
-#     val_subjects=val_subj,
-#     test_subjects=test_subj,
-# )
-
-X_train, X_val, X_test, Y_train, Y_val, Y_test = load_bci_dataset(
-    data_dir=data_dir_bci,
-    tmin=0.0,
-    tmax=4.0,
-)
-
-CROP_LEN=500
-
-# Training: random-crop dataset
-train_ds_B = BCIV2aCroppedDataset(
-    X_train,
-    Y_train,
-    crop_len=CROP_LEN,
-    n_crops_per_trial=10,
-)
-
-# Validation: still center window
-val_ds_B = BCIV2aFixedCenterCropDataset(X_val, Y_val, crop_len=CROP_LEN)
-
-model_B = EEGTransformerModel(
-    input_channels=22,
-    seq_len=500,
-    num_classes=4,
-    d_model=64,
-    nhead=4,
-    num_encoder_layers=1,
-    embedding_type='sinusoidal',
-    conv_block_type='multi'
-)
-
-model_B = train_model_datasets(
-    model=model_B,
-    train_dataset=train_ds_B,
-    val_dataset=val_ds_B,
-    epochs=50,
-    lr=5e-4,
-    patience=5,
-    batch_size_train=8,
-    batch_size_val=8,
-)
-
-test_loss_B, test_acc_B, test_bal_acc_B = evaluate_model_multicrop(
-    model=model_B,
-    X=X_test,
-    Y=Y_test,
-    crop_len=CROP_LEN,
-    n_crops=5,               # e.g. crops at 0,125,250,375,500
-    plot_confusion_matrix=True,
-)
+if __name__ == "__main__":
+    main()
