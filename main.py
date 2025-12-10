@@ -7,7 +7,7 @@ import torch.optim as optim
 import numpy as np
 from loading import load_fif_data, load_for_complete_cross_validation, load_bci_dataset, load_physionet_eeg, make_default_split
 from train_validate import train_model, validate_model
-from datasets import BCIV2aTrialsDataset, BCIV2aCroppedDataset, BCIV2aFixedCenterCropDataset, train_model_datasets, evaluate_model_multicrop
+from datasets import EEGTrialsDataset, EEGCroppedDataset, EEGFixedCenterCropDataset, train_model_datasets, evaluate_model_multicrop
 from model import EEGTransformerModel, ShallowConvNet, MultiscaleConvolution
 from collections import Counter
 import pandas as pd

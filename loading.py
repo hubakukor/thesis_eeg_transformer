@@ -440,38 +440,36 @@ def load_physionet_eeg(
     val_subjects=None,
     test_subjects=None,
     t_min=0.0,
-    t_max=3.0
+    t_max=3.0,
+    target_sfreq=None,              # e.g. 250.0 to match BCI; None = keep original
+    align_with_bci=False            # if True: keep only left/right/feet and remap to BCI-like codes
 ):
     """
-    Load PhysioNet MI dataset with optional default subject split.
+    Load PhysioNet MI dataset with optional default subject split, optional resampling,
+    and optional label alignment with BCI IV 2a.
 
-    Final labels:
+    PhysioNet original labels (per your current code):
         0 = rest
         1 = left hand
         2 = right hand
         3 = both fists
         4 = both feet
 
-    Args:
-        data_dir (str): Path to the PhysioNet EEG dataset folder.
-        train_subjects (list): List of subject folders to use for training.
-        val_subjects (list): List of subject folders to use for validation.
-        test_subjects (list): List of subject folders to use for testing.
-        t_min (float): Start time of epochs (in seconds).
-        t_max (float): End time of epochs (in seconds).
+    If align_with_bci=True:
+        keep only {1, 2, 4} and remap to:
+            1 (left hand)  -> 0
+            2 (right hand) -> 1
+            4 (both feet)  -> 2
+        (no tongue class in PhysioNet)
 
     Returns:
-        X_train, X_val, X_test, Y_train, Y_val, Y_test
+        X_train, X_val, X_test : np.ndarray (N, C, T)
+        Y_train, Y_val, Y_test : torch.Tensor (N,)
+        ch_names : list of str (channel names in X_*)
     """
 
-    # Runs where T1/T2 mean both-fists / both-feet
-    BOTH_LIMBS_RUNS = [5, 6, 9, 10, 13, 14]
-    # Runs where T1 = left, T2 = right
-    LEFT_RIGHT_RUNS = [3, 4, 7, 8, 11, 12]
-
-    # Known nominal sampling rate for PhysioNet EEG (EEG channels)
-    SFREQ_TARGET = 160.0
-    target_samples = int((t_max - t_min) * SFREQ_TARGET)
+    BOTH_LIMBS_RUNS = [5, 6, 9, 10, 13, 14]   # T1/T2 = fists/feet
+    LEFT_RIGHT_RUNS = [3, 4, 7, 8, 11, 12]   # T1/T2 = left/right hands
 
     # Get list of subjects (folders)
     all_subjects = sorted([
@@ -479,21 +477,22 @@ def load_physionet_eeg(
         if os.path.isdir(os.path.join(data_dir, d))
     ])
 
-
     if len(all_subjects) == 0:
         raise RuntimeError("No subject folders found in PhysioNet dataset.")
 
     # If no subjects given → compute default split
     if train_subjects is None or val_subjects is None or test_subjects is None:
         train_subjects, val_subjects, test_subjects = make_default_split(all_subjects)
-
         print(f"Using default subject split:")
         print(f" Train: {train_subjects}")
         print(f" Val:   {val_subjects}")
         print(f" Test:  {test_subjects}")
 
+    # Helper to load multiple subjects
     def load_from_subjects(subject_folders):
         X_list, Y_list = [], []
+        ch_names = None
+        printed_info = False
 
         for subject in subject_folders:
             subject_path = os.path.join(data_dir, subject)
@@ -514,13 +513,18 @@ def load_physionet_eeg(
                     continue
 
                 print(f"Loading {edf_path} (run {run_number})...")
-
                 raw = mne.io.read_raw_edf(edf_path, preload=True, stim_channel='auto', verbose="ERROR")
 
+                # Resample if requested
+                sfreq_orig = raw.info["sfreq"]
+                if target_sfreq is not None and abs(sfreq_orig - target_sfreq) > 1e-3:
+                    print(f"Resampling from {sfreq_orig:.3f} Hz to {target_sfreq:.3f} Hz...")
+                    raw.resample(target_sfreq)
                 sfreq = raw.info["sfreq"]
-                if abs(sfreq - SFREQ_TARGET) > 1e-3:
-                    print(f"Warning: sfreq={sfreq} Hz in {edf_file}, expected {SFREQ_TARGET} Hz. "
-                          f"Will pad/trim to {target_samples} samples without resampling.")
+
+                # Store channel names once
+                if ch_names is None:
+                    ch_names = raw.ch_names
 
                 # Extract events
                 events, event_id = mne.events_from_annotations(raw, verbose="ERROR")
@@ -543,25 +547,26 @@ def load_physionet_eeg(
                     verbose="ERROR"
                 )
 
-                epoch_data = epochs.get_data()
-                labels_raw = epochs.events[:, -1]
+                epoch_data = epochs.get_data()       # (n_epochs, C, T)
+                labels_raw = epochs.events[:, -1]    # physio event codes
 
-                # Assign final semantic labels
+                # Assign PhysioNet semantic labels
                 labels = np.full_like(labels_raw, -1)
 
                 # T0 = rest
                 labels[labels_raw == code_T0] = 0
 
                 if run_number in BOTH_LIMBS_RUNS:
-                    labels[labels_raw == code_T1] = 3
-                    labels[labels_raw == code_T2] = 4
+                    labels[labels_raw == code_T1] = 3  # both fists
+                    labels[labels_raw == code_T2] = 4  # both feet
                 elif run_number in LEFT_RIGHT_RUNS:
-                    labels[labels_raw == code_T1] = 1
-                    labels[labels_raw == code_T2] = 2
+                    labels[labels_raw == code_T1] = 1  # left hand
+                    labels[labels_raw == code_T2] = 2  # right hand
                 else:
                     print(f"Unknown run {run_number}, skipping.")
                     continue
 
+                # Filter out invalid labels
                 valid = labels != -1
                 if not np.any(valid):
                     continue
@@ -569,33 +574,59 @@ def load_physionet_eeg(
                 epoch_data = epoch_data[valid]
                 labels = labels[valid]
 
-                # Enforce *global* target_samples for all data
-                epoch_data = fix_epoch_length(epoch_data, target_samples)
+                # OPTIONAL: align PhysioNet labels with BCI-overlap classes
+                if align_with_bci:
+                    # keep only left/right/feet and map → 0/1/2
+                    # physio 1=left,2=right,4=feet
+                    overlap_map = {1: 0, 2: 1, 4: 2}
+                    mask = np.isin(labels, list(overlap_map.keys()))
+                    if not np.any(mask):
+                        continue
+                    labels = np.array([overlap_map[l] for l in labels[mask]])
+                    epoch_data = epoch_data[mask]
+
+                # Enforce consistent epoch length (just in case)
+                target_samples = int(round((t_max - t_min) * sfreq))
+                if not printed_info:
+                    print(f"Epoch length: {epoch_data.shape[-1]} samples "
+                          f"(~{epoch_data.shape[-1] / sfreq:.3f} s) at {sfreq:.3f} Hz "
+                          f"(target_samples={target_samples})")
+                    printed_info = True
+
+                # If off-by-one etc., pad/trim (if you still have fix_epoch_length defined)
+                if epoch_data.shape[-1] != target_samples:
+                    epoch_data = fix_epoch_length(epoch_data, target_samples)
+
+                # Normalization (you can swap to z-score if you want)
                 epoch_data = np.array([normalize_epoch_minmax(e) for e in epoch_data])
 
                 X_list.append(epoch_data)
                 Y_list.append(labels)
 
         if not X_list:
-            return np.empty((0,)), np.empty((0,))
+            return np.empty((0,)), np.empty((0,)), ch_names
 
         X = np.concatenate(X_list, axis=0)
         Y = np.concatenate(Y_list, axis=0)
-        return X, Y
+        return X, Y, ch_names
 
-    # Load each set
-    X_train, Y_train = load_from_subjects(train_subjects)
-    X_val, Y_val = load_from_subjects(val_subjects)
-    X_test, Y_test = load_from_subjects(test_subjects)
+    # Load each split
+    X_train, Y_train, ch_names_train = load_from_subjects(train_subjects)
+    X_val,   Y_val,   ch_names_val   = load_from_subjects(val_subjects)
+    X_test,  Y_test,  ch_names_test  = load_from_subjects(test_subjects)
 
-    # To torch labels
-    Y_train = torch.from_numpy(Y_train).long()
-    Y_val = torch.from_numpy(Y_val).long()
-    Y_test = torch.from_numpy(Y_test).long()
+    # Sanity: channel names should match across splits (if any non-empty)
+    ch_names = ch_names_train or ch_names_val or ch_names_test
 
-    print("\nFinal dataset shapes:")
+    print("\nFinal PhysioNet dataset shapes:")
     print(f" Train: {X_train.shape}, labels: {Y_train.shape}")
     print(f" Val:   {X_val.shape},   labels: {Y_val.shape}")
     print(f" Test:  {X_test.shape},  labels: {Y_test.shape}")
+    print(f" Channels: {ch_names}")
 
-    return X_train, X_val, X_test, Y_train, Y_val, Y_test
+    # To torch labels
+    Y_train = torch.from_numpy(Y_train).long()
+    Y_val   = torch.from_numpy(Y_val).long()
+    Y_test  = torch.from_numpy(Y_test).long()
+
+    return X_train, X_val, X_test, Y_train, Y_val, Y_test, ch_names
