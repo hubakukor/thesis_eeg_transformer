@@ -308,7 +308,7 @@ def augment_train_by_mixing(X, y, aug_factor=1.0, cut_range=(0.35, 0.65), seed=4
     return X_all[perm], y_all[perm]
 
 
-def load_bci_dataset(data_dir, tmin=0.0, tmax=4.0):
+def load_bci_dataset(data_dir, tmin=0.0, tmax=4.0, normalize=True):
     """
     Loads BCI Competition IV 2a dataset (both training and evaluation GDF files)
 
@@ -320,26 +320,29 @@ def load_bci_dataset(data_dir, tmin=0.0, tmax=4.0):
     Returns:
         X_train, Y_train, X_test, Y_test, X_val, Y_val : numpy arrays
     """
-    motor_imagery_event_ids = {
-        "left_hand": 769,
-        "right_hand": 770,
-        "feet": 771,
-        "tongue": 772,
+    # BCI IV 2a motor imagery codes (as they appear as annotation descriptions in MNE for .gdf)
+    desc_to_class = {
+        "769": 0,  # left hand
+        "770": 1,  # right hand
+        "771": 2,  # feet
+        "772": 3,  # tongue
     }
 
     X_all, Y_all = [], []
     bci_channels = None
 
     for file in os.listdir(data_dir):
+        # Only labeled training files
         if not file.endswith("T.gdf"):
             continue
 
         file_path = os.path.join(data_dir, file)
         print(f"\nProcessing file: {file_path}")
-        raw = mne.io.read_raw_gdf(file_path, preload=True)
 
-        # Drop EOG channels
-        for ch in ['EOG-left', 'EOG-central', 'EOG-right']:
+        raw = mne.io.read_raw_gdf(file_path, preload=True, verbose="ERROR")
+
+        # Drop EOG channels if present
+        for ch in ["EOG-left", "EOG-central", "EOG-right"]:
             if ch in raw.ch_names:
                 raw.drop_channels([ch])
 
@@ -348,56 +351,79 @@ def load_bci_dataset(data_dir, tmin=0.0, tmax=4.0):
             bci_channels = raw.ch_names.copy()
             print("Detected BCI EEG channels:", bci_channels)
 
-        # High-pass filter
-        raw.filter(l_freq=2.0, h_freq=None)
+        # High-pass filter (matches your current pipeline)
+        raw.filter(l_freq=2.0, h_freq=None, verbose="ERROR")
 
-        # Extract events
-        events, event_id = mne.events_from_annotations(raw)
-        motor_imagery_ids = [event_id.get(str(val)) for val in motor_imagery_event_ids.values()]
-        motor_imagery_ids = [e for e in motor_imagery_ids if e is not None]
+        # Extract events + MNE event_id mapping from annotations
+        events, event_id = mne.events_from_annotations(raw, verbose="ERROR")
 
-        if not motor_imagery_ids:
-            print(f"No valid motor imagery IDs in {file}")
+
+        # Build an event_id dict only for the MI events that exist in THIS file
+        epochs_event_id = {desc: event_id[desc] for desc in desc_to_class.keys() if desc in event_id}
+
+        if len(epochs_event_id) == 0:
+            print(f"No MI events (769/770/771/772) found in {file}. Available keys: {sorted(event_id.keys())[:20]} ...")
             continue
 
-        # Filter only MI events
-        mi_events = np.array([e for e in events if e[2] in motor_imagery_ids])
-        if len(mi_events) == 0:
-            print(f"No MI events in {file}")
+        # Filter events to keep only those internal codes
+        keep_codes = set(epochs_event_id.values())
+        mi_events = events[np.isin(events[:, 2], list(keep_codes))]
+
+        if mi_events.shape[0] == 0:
+            print(f"No matching MI events after filtering in {file}.")
             continue
 
         # Epoching
         epochs = mne.Epochs(
-            raw, mi_events,
-            {key: event_id.get(str(val)) for key, val in motor_imagery_event_ids.items()},
-            tmin=tmin, tmax=tmax, baseline=None, preload=True
+            raw,
+            mi_events,
+            event_id=epochs_event_id,  # IMPORTANT: uses internal codes for "769"/"770"/"771"/"772"
+            tmin=tmin,
+            tmax=tmax,
+            baseline=None,
+            preload=True,
+            verbose="ERROR",
         )
+
+
         data = epochs.get_data()  # (n_epochs, n_channels, n_times)
-        labels = epochs.events[:, -1]
 
-        # Normalize each epoch
-        data = np.array([normalize_epoch_minmax(e) for e in data])
+        # Robust label mapping:
+        # epochs.events[:, 2] contains internal event codes -> map back to description -> map to class index
+        code_to_desc = {v: k for k, v in epochs_event_id.items()}
+        labels_internal = epochs.events[:, 2]
+        labels = np.array([desc_to_class[code_to_desc[c]] for c in labels_internal], dtype=np.int64)
 
-        # Map event codes (7–10) → 1–4
-        label_mapping = {7: 0, 8: 1, 9: 2, 10: 3}
-        labels = np.array([label_mapping.get(y, -1) for y in labels])
-        valid = labels != -1
-        data, labels = data[valid], labels[valid]
+        # # Normalize each epoch per channel to [-1, 1]
+        # if normalize == True:
+        #     data = np.array([normalize_epoch_minmax(e) for e in data], dtype=np.float32)
+
 
         X_all.append(data)
         Y_all.append(labels)
 
-    # Concatenate all subjects
-    if X_all:
-        X_all = np.concatenate(X_all, axis=0)
-        Y_all = np.concatenate(Y_all, axis=0)
-    else:
-        print("No valid data found.")
-        return (np.empty((0,)),)*6
+    # Concatenate all subjects/files
+    if not X_all:
+        print("No valid BCI data found.")
+        return (np.empty((0,)),) * 6 + (None,)
 
-    # Split into train/val/test: 80/10/10
-    X_train, X_temp, Y_train, Y_temp = train_test_split(X_all, Y_all, test_size=0.2, random_state=42, stratify=Y_all)
-    X_val, X_test, Y_val, Y_test = train_test_split(X_temp, Y_temp, test_size=0.5, random_state=42, stratify=Y_temp)
+    X_all = np.concatenate(X_all, axis=0)
+    Y_all = np.concatenate(Y_all, axis=0)
+
+    # Split into train/val/test: 80/10/10 (stratified)
+    X_train, X_temp, Y_train, Y_temp = train_test_split(
+        X_all, Y_all, test_size=0.2, random_state=42, stratify=Y_all
+    )
+    X_val, X_test, Y_val, Y_test = train_test_split(
+        X_temp, Y_temp, test_size=0.5, random_state=42, stratify=Y_temp
+    )
+
+    # Compute channel z-score stats and apply
+    mean, std = compute_channel_zscore_stats(X_train)
+
+    X_train = apply_channel_zscore(X_train, mean, std)
+    X_val = apply_channel_zscore(X_val, mean, std)
+    X_test = apply_channel_zscore(X_test, mean, std)
 
     # Convert labels to torch tensors
     Y_train = torch.from_numpy(Y_train).long()
@@ -708,3 +734,34 @@ def match_common_channels(data, current_channels, target_channels, verbose=True)
     data_out = data[:, common_indices, :]  # (n_epochs, n_common, n_times)
 
     return data_out, common_channels
+
+def compute_channel_zscore_stats(X_train, eps=1e-6):
+    """
+    Compute per-channel mean and std from training data only.
+
+    Args:
+        X_train : np.ndarray, shape (N, C, T)
+    Returns:
+        mean : np.ndarray, shape (C, 1)
+        std  : np.ndarray, shape (C, 1)
+    """
+    # Collapse trials and time, keep channels
+    # (N, C, T) -> (C, N*T)
+    Xc = X_train.transpose(1, 0, 2).reshape(X_train.shape[1], -1)
+
+    mean = Xc.mean(axis=1, keepdims=True)
+    std  = Xc.std(axis=1, keepdims=True)
+
+    std = np.maximum(std, eps)  # numerical safety
+    return mean, std
+
+def apply_channel_zscore(X, mean, std):
+    """
+    Apply per-channel z-score normalization.
+
+    Args:
+        X    : np.ndarray, shape (N, C, T)
+        mean : np.ndarray, shape (C, 1)
+        std  : np.ndarray, shape (C, 1)
+    """
+    return (X - mean[None, :, :]) / std[None, :, :]

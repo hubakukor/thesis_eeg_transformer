@@ -22,7 +22,9 @@ def train_model(model, train_dataset, val_dataset,
     criterion = nn.CrossEntropyLoss()
 
     if optimizer is None:
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+        # optimizer = optim.Adam(model.parameters(), lr=lr)
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
+
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size_train, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size_val, shuffle=False)

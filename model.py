@@ -112,43 +112,28 @@ class EEGTransformerModel(nn.Module):
 
 class ShallowConvNet(nn.Module):
     def __init__(self, input_channels=63, input_time_length=1501, num_classes=2):
-        """
-        ShallowConvNet based on Dose et al. (2018) and Schirrmeister et al. (2017).
+        super().__init__()
+        self.input_channels = input_channels  # <-- store it
 
-        Args:
-            input_channels (int): Number of input channels (EEG channels).
-            input_time_length (int): Length of the time series (sequence length).
-            num_classes (int): Number of output classes for classification.
-        """
-        super(ShallowConvNet, self).__init__()
-
-        # 1D convolution along the time axis
         self.conv_time = nn.Conv2d(
-            in_channels=1,
-            out_channels=40,
-            kernel_size=(1, 25),
-            stride=1,
-            padding=(0, 12),
-            bias=False
+            in_channels=1, out_channels=40,
+            kernel_size=(1, 25), stride=1, padding=(0, 12), bias=False
         )
 
-        # 1D convolution along the spatial axis
         self.conv_spat = nn.Conv2d(
-            in_channels=40,
-            out_channels=40,
-            kernel_size=(input_channels, 1),
-            stride=1,
-            bias=False
+            in_channels=40, out_channels=40,
+            kernel_size=(input_channels, 1), stride=1, bias=False
         )
 
-        self.batch_norm = nn.BatchNorm2d(40) # Batch normalization
-        self.pooling = nn.AvgPool2d(kernel_size=(1, 75), stride=(1, 15)) # Average Pooling
-        self.classifier = nn.Linear(self._calculate_flatten_size(input_time_length), num_classes) # Final classifier
+        self.batch_norm = nn.BatchNorm2d(40)
+        self.pooling = nn.AvgPool2d(kernel_size=(1, 75), stride=(1, 15))
 
-    # Calculate the size of the flattened tensor fot the fc layer
+        self.classifier = nn.Linear(self._calculate_flatten_size(input_time_length), num_classes)
+
     def _calculate_flatten_size(self, input_time_length):
         with torch.no_grad():
-            x = torch.zeros(1, 1, 63, input_time_length)
+            # use the actual configured channel count
+            x = torch.zeros(1, 1, self.input_channels, input_time_length)
             x = self.conv_time(x)
             x = self.conv_spat(x)
             x = self.batch_norm(x)
@@ -159,7 +144,7 @@ class ShallowConvNet(nn.Module):
             return x.shape[1]
 
     def forward(self, x):
-        x = x.unsqueeze(1)  # [batch, 1, channels, time]
+        x = x.unsqueeze(1)  # [B, 1, C, T]
         x = self.conv_time(x)
         x = self.conv_spat(x)
         x = self.batch_norm(x)
@@ -167,9 +152,7 @@ class ShallowConvNet(nn.Module):
         x = self.pooling(x)
         x = torch.log(torch.clamp(x, min=1e-6))
         x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
-
+        return self.classifier(x)
 
 
 class MultiscaleConvolution(nn.Module):
@@ -282,3 +265,196 @@ class MultiKernelTemporalSpatial(nn.Module):
         return x
 
 
+class EEGVisionTransformer(nn.Module):
+    """
+    Vision Transformer for EEG using Channels x Time as a 2D image.
+    Input:  x [B, C, T]
+    Output: logits [B, num_classes]
+    """
+    def __init__(
+        self,
+        input_channels: int,
+        seq_len: int,
+        num_classes: int,
+        d_model: int = 128,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dim_feedforward: int = 256,
+        dropout: float = 0.1,
+        # patching
+        patch_size_ch: int = 2,
+        patch_size_t: int = 25,
+        # conv stem
+        stem_channels: int = 32,
+        stem_kernel_t: int = 15,
+    ):
+        super().__init__()
+
+        if input_channels % patch_size_ch != 0:
+            raise ValueError(
+                f"input_channels={input_channels} must be divisible by patch_size_ch={patch_size_ch}"
+            )
+
+        self.input_channels = input_channels
+        self.seq_len = seq_len
+        self.patch_size_ch = patch_size_ch
+        self.patch_size_t = patch_size_t
+
+        # --- Conv stem ---
+        # Depthwise temporal conv: per-channel filtering along time
+        self.stem = nn.Sequential(
+            nn.Conv2d(
+                in_channels=1,
+                out_channels=stem_channels,
+                kernel_size=(1, stem_kernel_t),
+                padding=(0, stem_kernel_t // 2),
+                groups=1,  # keep simple; not true depthwise on the 1-channel input
+                bias=False,
+            ),
+            nn.BatchNorm2d(stem_channels),
+            nn.GELU(),
+            # Mix across channels a bit (spatial conv collapsing C -> 1)
+            nn.Conv2d(
+                in_channels=stem_channels,
+                out_channels=stem_channels,
+                kernel_size=(input_channels, 1),
+                padding=(0, 0),
+                bias=False,
+            ),
+            nn.BatchNorm2d(stem_channels),
+            nn.GELU(),
+        )
+        # After this stem, shape is [B, stem_channels, 1, T]
+
+        # --- Patch embedding ---
+        # Patchify along time only now (since channel dim collapsed to 1)
+        # So we patch (1 x patch_size_t)
+        self.patch_embed = nn.Conv2d(
+            in_channels=stem_channels,
+            out_channels=d_model,
+            kernel_size=(1, patch_size_t),
+            stride=(1, patch_size_t),
+            bias=True,
+        )
+
+        # Token count for pos embedding
+        # H is 1 after collapsing channels; W is seq_len // patch_size_t after cropping
+        grid_w = seq_len // patch_size_t
+        self.num_tokens = grid_w
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_tokens, d_model))
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        enc_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
+
+        self.norm = nn.LayerNorm(d_model)
+        self.head = nn.Linear(d_model, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, C, T]
+        B, C, T = x.shape
+        if C != self.input_channels:
+            raise ValueError(f"Expected C={self.input_channels}, got C={C}")
+
+        # Crop time to be divisible by patch_size_t
+        T_crop = (T // self.patch_size_t) * self.patch_size_t
+        x = x[:, :, :T_crop]
+
+        # [B, 1, C, T]
+        x = x.unsqueeze(1)
+
+        # conv stem -> [B, stem_channels, 1, T]
+        x = self.stem(x)
+
+        # patch embed -> [B, d_model, 1, W]
+        x = self.patch_embed(x)
+
+        # tokens: [B, W, d_model]
+        x = x.squeeze(2).transpose(1, 2)
+
+        # pos emb
+        if x.size(1) != self.pos_embed.size(1):
+            x = x + self.pos_embed[:, :x.size(1), :]
+        else:
+            x = x + self.pos_embed
+
+        x = self.encoder(x)
+        x = self.norm(x)
+        x = x.mean(dim=1)
+        return self.head(x)
+
+class TFViT(nn.Module):
+    """
+    ViT for EEG time-frequency "images".
+    Input:  x [B, Cin, F, TT]  (Cin = channels/regions)
+    Output: logits [B, num_classes]
+    """
+    def __init__(
+        self,
+        in_chans: int,
+        num_classes: int,
+        f_bins: int,
+        t_bins: int,
+        d_model: int = 128,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dim_feedforward: int = 256,
+        dropout: float = 0.1,
+        patch_f: int = 8,
+        patch_t: int = 4,
+    ):
+        super().__init__()
+
+        if f_bins % patch_f != 0 or t_bins % patch_t != 0:
+            raise ValueError(
+                f"Patch sizes must divide (F,TT). Got F={f_bins},TT={t_bins} "
+                f"with patch_f={patch_f},patch_t={patch_t}."
+            )
+
+        self.patch_embed = nn.Conv2d(
+            in_channels=in_chans,
+            out_channels=d_model,
+            kernel_size=(patch_f, patch_t),
+            stride=(patch_f, patch_t),
+            bias=True
+        )
+
+        nF = f_bins // patch_f
+        nT = t_bins // patch_t
+        self.num_tokens = nF * nT
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_tokens, d_model))
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        enc_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
+
+        self.norm = nn.LayerNorm(d_model)
+        self.head = nn.Linear(d_model, num_classes)
+
+    def forward(self, x):
+        # x: [B, Cin, F, TT]
+        x = self.patch_embed(x)              # [B, D, F', T']
+        x = x.flatten(2).transpose(1, 2)     # [B, N, D]
+        x = x + self.pos_embed
+        x = self.encoder(x)
+        x = self.norm(x)
+        x = x.mean(dim=1)
+        return self.head(x)
