@@ -6,6 +6,7 @@ from torchsummary import summary
 import torch.optim as optim
 #import data_processing
 from positional_embedding import SinusoidalPositionalEmbedding, LearnablePositionalEmbedding
+import math
 
 
 # Define the model architecture
@@ -265,175 +266,55 @@ class MultiKernelTemporalSpatial(nn.Module):
         return x
 
 
-class EEGVisionTransformer(nn.Module):
+class TFViT2(nn.Module):
     """
-    Vision Transformer for EEG using Channels x Time as a 2D image.
-    Input:  x [B, C, T]
+    Paper-style Vision Transformer for EEG time-frequency maps.
+
+    Input:  x [B, Cin, F, TT]
     Output: logits [B, num_classes]
-    """
-    def __init__(
-        self,
-        input_channels: int,
-        seq_len: int,
-        num_classes: int,
-        d_model: int = 128,
-        nhead: int = 4,
-        num_layers: int = 2,
-        dim_feedforward: int = 256,
-        dropout: float = 0.1,
-        # patching
-        patch_size_ch: int = 2,
-        patch_size_t: int = 25,
-        # conv stem
-        stem_channels: int = 32,
-        stem_kernel_t: int = 15,
-    ):
-        super().__init__()
 
-        if input_channels % patch_size_ch != 0:
-            raise ValueError(
-                f"input_channels={input_channels} must be divisible by patch_size_ch={patch_size_ch}"
-            )
-
-        self.input_channels = input_channels
-        self.seq_len = seq_len
-        self.patch_size_ch = patch_size_ch
-        self.patch_size_t = patch_size_t
-
-        # --- Conv stem ---
-        # Depthwise temporal conv: per-channel filtering along time
-        self.stem = nn.Sequential(
-            nn.Conv2d(
-                in_channels=1,
-                out_channels=stem_channels,
-                kernel_size=(1, stem_kernel_t),
-                padding=(0, stem_kernel_t // 2),
-                groups=1,  # keep simple; not true depthwise on the 1-channel input
-                bias=False,
-            ),
-            nn.BatchNorm2d(stem_channels),
-            nn.GELU(),
-            # Mix across channels a bit (spatial conv collapsing C -> 1)
-            nn.Conv2d(
-                in_channels=stem_channels,
-                out_channels=stem_channels,
-                kernel_size=(input_channels, 1),
-                padding=(0, 0),
-                bias=False,
-            ),
-            nn.BatchNorm2d(stem_channels),
-            nn.GELU(),
-        )
-        # After this stem, shape is [B, stem_channels, 1, T]
-
-        # --- Patch embedding ---
-        # Patchify along time only now (since channel dim collapsed to 1)
-        # So we patch (1 x patch_size_t)
-        self.patch_embed = nn.Conv2d(
-            in_channels=stem_channels,
-            out_channels=d_model,
-            kernel_size=(1, patch_size_t),
-            stride=(1, patch_size_t),
-            bias=True,
-        )
-
-        # Token count for pos embedding
-        # H is 1 after collapsing channels; W is seq_len // patch_size_t after cropping
-        grid_w = seq_len // patch_size_t
-        self.num_tokens = grid_w
-
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_tokens, d_model))
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
-
-        enc_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
-
-        self.norm = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, num_classes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, C, T]
-        B, C, T = x.shape
-        if C != self.input_channels:
-            raise ValueError(f"Expected C={self.input_channels}, got C={C}")
-
-        # Crop time to be divisible by patch_size_t
-        T_crop = (T // self.patch_size_t) * self.patch_size_t
-        x = x[:, :, :T_crop]
-
-        # [B, 1, C, T]
-        x = x.unsqueeze(1)
-
-        # conv stem -> [B, stem_channels, 1, T]
-        x = self.stem(x)
-
-        # patch embed -> [B, d_model, 1, W]
-        x = self.patch_embed(x)
-
-        # tokens: [B, W, d_model]
-        x = x.squeeze(2).transpose(1, 2)
-
-        # pos emb
-        if x.size(1) != self.pos_embed.size(1):
-            x = x + self.pos_embed[:, :x.size(1), :]
-        else:
-            x = x + self.pos_embed
-
-        x = self.encoder(x)
-        x = self.norm(x)
-        x = x.mean(dim=1)
-        return self.head(x)
-
-class TFViT(nn.Module):
-    """
-    ViT for EEG time-frequency "images".
-    Input:  x [B, Cin, F, TT]  (Cin = channels/regions)
-    Output: logits [B, num_classes]
+    Key improvements vs your TFViT:
+    - Pads (F,TT) so patch sizes always work (no divisibility error).
+    - Uses CLS token.
+    - Uses learnable positional embeddings on a 2D grid + interpolation to current grid size.
+    - Adds embedding dropout.
     """
     def __init__(
         self,
         in_chans: int,
         num_classes: int,
-        f_bins: int,
-        t_bins: int,
-        d_model: int = 128,
-        nhead: int = 4,
-        num_layers: int = 2,
-        dim_feedforward: int = 256,
+        d_model: int = 192,
+        nhead: int = 6,
+        num_layers: int = 4,
+        dim_feedforward: int = 768,
         dropout: float = 0.1,
-        patch_f: int = 8,
+        patch_f: int = 3,
         patch_t: int = 4,
+        # base grid used to initialize pos embedding; it will be interpolated at runtime
+        base_grid: tuple[int, int] = (6, 8),
     ):
         super().__init__()
+        self.in_chans = in_chans
+        self.patch_f = patch_f
+        self.patch_t = patch_t
 
-        if f_bins % patch_f != 0 or t_bins % patch_t != 0:
-            raise ValueError(
-                f"Patch sizes must divide (F,TT). Got F={f_bins},TT={t_bins} "
-                f"with patch_f={patch_f},patch_t={patch_t}."
-            )
-
+        # Patch embedding via conv: (Cin,F,TT) -> (D,F',T')
         self.patch_embed = nn.Conv2d(
             in_channels=in_chans,
             out_channels=d_model,
             kernel_size=(patch_f, patch_t),
             stride=(patch_f, patch_t),
-            bias=True
+            bias=True,
         )
 
-        nF = f_bins // patch_f
-        nT = t_bins // patch_t
-        self.num_tokens = nF * nT
+        # CLS token + positional embedding
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
 
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_tokens, d_model))
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        base_f, base_t = base_grid
+        base_n = base_f * base_t
+        self.pos_embed = nn.Parameter(torch.zeros(1, 1 + base_n, d_model))  # +1 for CLS
+
+        self.pos_drop = nn.Dropout(dropout)
 
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -449,12 +330,87 @@ class TFViT(nn.Module):
         self.norm = nn.LayerNorm(d_model)
         self.head = nn.Linear(d_model, num_classes)
 
-    def forward(self, x):
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+    def _pad_to_patch(self, x: torch.Tensor) -> tuple[torch.Tensor, int, int]:
+        """
+        Pad last two dims (F,TT) so they're divisible by (patch_f, patch_t).
+        Returns padded x and the resulting grid sizes (F',T') AFTER patch_embed.
+        """
+        B, C, Freq, Time = x.shape
+        pf, pt = self.patch_f, self.patch_t
+
+        pad_f = (pf - (Freq % pf)) % pf
+        pad_t = (pt - (Time % pt)) % pt
+        if pad_f or pad_t:
+            # pad format: (left, right, top, bottom) for last two dims
+            x = F.pad(x, (0, pad_t, 0, pad_f))
+
+        # After padding, patch grid sizes:
+        Freq_p, Time_p = x.shape[2], x.shape[3]
+        grid_f = Freq_p // pf
+        grid_t = Time_p // pt
+        return x, grid_f, grid_t
+
+    def _interp_pos(self, grid_f: int, grid_t: int, d_model: int) -> torch.Tensor:
+        """
+        Interpolate the 2D positional embedding to match (grid_f, grid_t).
+        Returns (1, 1+grid_f*grid_t, d_model)
+        """
+        cls_pos = self.pos_embed[:, :1, :]      # (1,1,D)
+        patch_pos = self.pos_embed[:, 1:, :]    # (1,baseN,D)
+
+        baseN = patch_pos.shape[1]
+        # infer base grid from baseN (we initialized it as base_f*base_t)
+        # Try near-square factorization if user changed base_grid incorrectly.
+        def factorize(n):
+            r = int(math.sqrt(n))
+            for a in range(r, 0, -1):
+                if n % a == 0:
+                    return a, n // a
+            return 1, n
+
+        base_f, base_t = factorize(baseN)
+
+        patch_pos_2d = patch_pos.reshape(1, base_f, base_t, d_model).permute(0, 3, 1, 2)  # (1,D,base_f,base_t)
+        patch_pos_2d = F.interpolate(patch_pos_2d, size=(grid_f, grid_t), mode="bilinear", align_corners=False)
+        patch_pos_new = patch_pos_2d.permute(0, 2, 3, 1).reshape(1, grid_f * grid_t, d_model)  # (1,N,D)
+
+        return torch.cat([cls_pos, patch_pos_new], dim=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [B, Cin, F, TT]
-        x = self.patch_embed(x)              # [B, D, F', T']
-        x = x.flatten(2).transpose(1, 2)     # [B, N, D]
-        x = x + self.pos_embed
-        x = self.encoder(x)
+        if x.ndim != 4:
+            raise ValueError(f"Expected (B,Cin,F,TT), got {tuple(x.shape)}")
+        if x.shape[1] != self.in_chans:
+            raise ValueError(f"Expected Cin={self.in_chans}, got Cin={x.shape[1]}")
+
+        # Pad so patching always works
+        x, grid_f, grid_t = self._pad_to_patch(x)
+
+        # Patch embedding
+        x = self.patch_embed(x)                 # (B, D, grid_f, grid_t)
+        x = x.flatten(2).transpose(1, 2)        # (B, N, D), N=grid_f*grid_t
+
+        B, N, D = x.shape
+
+        # CLS token
+        cls = self.cls_token.expand(B, -1, -1)  # (B,1,D)
+        x = torch.cat([cls, x], dim=1)          # (B,1+N,D)
+
+        # Positional embedding (interpolated to grid size)
+        pos = self._interp_pos(grid_f, grid_t, D)  # (1,1+N,D)
+        x = x + pos
+        x = self.pos_drop(x)
+
+        # Transformer
+        x = self.encoder(x)   # (B,1+N,D)
         x = self.norm(x)
-        x = x.mean(dim=1)
-        return self.head(x)
+
+        # Classify using CLS output
+        out = x[:, 0, :]      # (B,D)
+        return self.head(out)
