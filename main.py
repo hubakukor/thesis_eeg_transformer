@@ -6,9 +6,9 @@ from torchsummary import summary
 import torch.optim as optim
 import numpy as np
 from loading import load_fif_data, load_for_complete_cross_validation, load_bci_dataset, load_physionet_eeg, make_default_split, match_common_channels
-from train_validate import train_model, evaluate_model
+from train_validate import train_model, evaluate_model, run_loocv_bci, run_loocv_bci_overlap3
 from datasets import EEGTrialsDataset, EEGCroppedDataset, EEGFixedCenterCropDataset
-from model import EEGTransformerModel, ShallowConvNet, MultiscaleConvolution, TFViT2
+from model import EEGTransformerModel, ShallowConvNet, MultiscaleConvolution, TFViT2, EEGTransformerModelV2
 from tf_features import pick_channels_by_name, eeg_to_logspec_stft, evaluate_model_tf
 from collections import Counter
 import pandas as pd
@@ -23,9 +23,9 @@ from sklearn.metrics import balanced_accuracy_score, accuracy_score
 #load data from files
 
 #data directories
-data_dir_c = r"D:\suli\thesis\par2024_two_cmd_c_global\par2024_two_cmd_c_global"
-data_dir_b = r"D:\suli\thesis\par2024_two_cmd_b_global\par2024_two_cmd_b_global"
-data_dir_inv = r"D:\suli\thesis\par2024_inv\par2024_inv"
+data_dir_c = r"datasets/\par2024_two_cmd_c_global\par2024_two_cmd_c_global"
+data_dir_b = r"datasets/\par2024_two_cmd_b_global\par2024_two_cmd_b_global"
+data_dir_inv = r"datasets/par2024_inv\par2024_inv"
 data_dir_bci = r"datasets/BCICIV_2a_gdf"
 data_dir_physionet = r"datasets/eeg-motor-movementimagery-dataset-1.0.0/files"
 
@@ -225,76 +225,104 @@ def make_eeg_transformer(input_channels, seq_len, num_classes=3):
 # if __name__ == "__main__":
 #     main()
 
-def eeg_to_mu_beta_logpower_fft(X, sfreq=250, eps=1e-8):
-    """
-    Whole-trial FFT -> log bandpower for mu and beta.
-    X: [N, C, T]
-    Returns: feats [N, C, 2] where last dim is [mu, beta]
-    """
-    N, C, T = X.shape
-    freqs = np.fft.rfftfreq(T, d=1.0/sfreq)
+# def eeg_to_mu_beta_logpower_fft(X, sfreq=250, eps=1e-8):
+#     """
+#     Whole-trial FFT -> log bandpower for mu and beta.
+#     X: [N, C, T]
+#     Returns: feats [N, C, 2] where last dim is [mu, beta]
+#     """
+#     N, C, T = X.shape
+#     freqs = np.fft.rfftfreq(T, d=1.0/sfreq)
+#
+#     mu_band   = (freqs >= 8.0)  & (freqs < 13.0)
+#     beta_band = (freqs >= 13.0) & (freqs <= 30.0)
+#
+#     feats = np.zeros((N, C, 2), dtype=np.float32)
+#
+#     for i in range(N):
+#         # rFFT over time for all channels at once -> [C, F]
+#         fft = np.fft.rfft(X[i], axis=-1)
+#         power = (np.abs(fft) ** 2)  # [C, F]
+#
+#         mu_power = power[:, mu_band].mean(axis=1)
+#         beta_power = power[:, beta_band].mean(axis=1)
+#
+#         feats[i, :, 0] = np.log(mu_power + eps)
+#         feats[i, :, 1] = np.log(beta_power + eps)
+#
+#     return feats
+#
+# def normalize_train_stats(Xtr, Xva, Xte):
+#     """
+#     Z-score using TRAIN stats only, per feature.
+#     """
+#     mu = Xtr.mean(axis=0, keepdims=True)
+#     std = Xtr.std(axis=0, keepdims=True) + 1e-6
+#     return (Xtr - mu) / std, (Xva - mu) / std, (Xte - mu) / std
+#
+# def main():
+#     # Load your BCI data with your existing loader
+#     X_tr, X_val, X_te, y_tr, y_val, y_te, ch_names = load_bci_dataset(
+#         data_dir="datasets/BCICIV_2a_gdf",
+#         tmin=0.0,
+#         tmax=4.0,
+#     )
+#
+#     # 1) Whole-trial mu/beta features
+#     Xtr_mb = eeg_to_mu_beta_logpower_fft(X_tr, sfreq=250)
+#     Xva_mb = eeg_to_mu_beta_logpower_fft(X_val, sfreq=250)
+#     Xte_mb = eeg_to_mu_beta_logpower_fft(X_te, sfreq=250)
+#
+#     print("Mu/Beta feature shapes:", Xtr_mb.shape, Xva_mb.shape, Xte_mb.shape)  # (N, 22, 2)
+#
+#     # 2) Normalize (train stats only)
+#     Xtr_mb, Xva_mb, Xte_mb = normalize_train_stats(Xtr_mb, Xva_mb, Xte_mb)
+#
+#     # 3) Flatten to (N, 22*2)
+#     Xtr_flat = Xtr_mb.reshape(len(Xtr_mb), -1)
+#     Xva_flat = Xva_mb.reshape(len(Xva_mb), -1)
+#     Xte_flat = Xte_mb.reshape(len(Xte_mb), -1)
+#
+#     # 4) Train simple classifier
+#     clf = LogisticRegression(max_iter=2000, n_jobs=-1, class_weight="balanced")
+#     clf.fit(Xtr_flat, y_tr)
+#
+#     # 5) Test
+#     y_pred = clf.predict(Xte_flat)
+#     acc = accuracy_score(y_te, y_pred)
+#     bal_acc = balanced_accuracy_score(y_te, y_pred)
+#
+#     print("\n=== Whole-trial Mu/Beta baseline ===")
+#     print(f"Accuracy:      {acc:.4f}")
+#     print(f"Balanced Acc:  {bal_acc:.4f}")
+#
+# if __name__ == "__main__":
+#     main()
 
-    mu_band   = (freqs >= 8.0)  & (freqs < 13.0)
-    beta_band = (freqs >= 13.0) & (freqs <= 30.0)
 
-    feats = np.zeros((N, C, 2), dtype=np.float32)
-
-    for i in range(N):
-        # rFFT over time for all channels at once -> [C, F]
-        fft = np.fft.rfft(X[i], axis=-1)
-        power = (np.abs(fft) ** 2)  # [C, F]
-
-        mu_power = power[:, mu_band].mean(axis=1)
-        beta_power = power[:, beta_band].mean(axis=1)
-
-        feats[i, :, 0] = np.log(mu_power + eps)
-        feats[i, :, 1] = np.log(beta_power + eps)
-
-    return feats
-
-def normalize_train_stats(Xtr, Xva, Xte):
-    """
-    Z-score using TRAIN stats only, per feature.
-    """
-    mu = Xtr.mean(axis=0, keepdims=True)
-    std = Xtr.std(axis=0, keepdims=True) + 1e-6
-    return (Xtr - mu) / std, (Xva - mu) / std, (Xte - mu) / std
-
-def main():
-    # Load your BCI data with your existing loader
-    X_tr, X_val, X_te, y_tr, y_val, y_te, ch_names = load_bci_dataset(
-        data_dir="datasets/BCICIV_2a_gdf",
-        tmin=0.0,
-        tmax=4.0,
+def model_fn():
+    return EEGTransformerModel(
+        input_channels=22,
+        seq_len=1001,
+        num_classes=3,
+        d_model=64,
+        nhead=4,
+        num_encoder_layers=1,
+        embedding_type="sinusoidal",
+        conv_block_type="multi",
     )
 
-    # 1) Whole-trial mu/beta features
-    Xtr_mb = eeg_to_mu_beta_logpower_fft(X_tr, sfreq=250)
-    Xva_mb = eeg_to_mu_beta_logpower_fft(X_val, sfreq=250)
-    Xte_mb = eeg_to_mu_beta_logpower_fft(X_te, sfreq=250)
 
-    print("Mu/Beta feature shapes:", Xtr_mb.shape, Xva_mb.shape, Xte_mb.shape)  # (N, 22, 2)
-
-    # 2) Normalize (train stats only)
-    Xtr_mb, Xva_mb, Xte_mb = normalize_train_stats(Xtr_mb, Xva_mb, Xte_mb)
-
-    # 3) Flatten to (N, 22*2)
-    Xtr_flat = Xtr_mb.reshape(len(Xtr_mb), -1)
-    Xva_flat = Xva_mb.reshape(len(Xva_mb), -1)
-    Xte_flat = Xte_mb.reshape(len(Xte_mb), -1)
-
-    # 4) Train simple classifier
-    clf = LogisticRegression(max_iter=2000, n_jobs=-1, class_weight="balanced")
-    clf.fit(Xtr_flat, y_tr)
-
-    # 5) Test
-    y_pred = clf.predict(Xte_flat)
-    acc = accuracy_score(y_te, y_pred)
-    bal_acc = balanced_accuracy_score(y_te, y_pred)
-
-    print("\n=== Whole-trial Mu/Beta baseline ===")
-    print(f"Accuracy:      {acc:.4f}")
-    print(f"Balanced Acc:  {bal_acc:.4f}")
-
-if __name__ == "__main__":
-    main()
+run_loocv_bci_overlap3(
+    data_dir=data_dir_bci,
+    model_fn=model_fn,
+    tmin=0.0,
+    tmax=4.0,
+    epochs=50,
+    patience=7,
+    batch_size_train=16,
+    batch_size_val=32,
+    lr=5e-4,
+    weight_decay=0.01,
+    val_ratio=0.1,
+)

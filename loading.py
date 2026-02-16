@@ -765,3 +765,56 @@ def apply_channel_zscore(X, mean, std):
         std  : np.ndarray, shape (C, 1)
     """
     return (X - mean[None, :, :]) / std[None, :, :]
+
+
+
+def load_bci_subject_T(data_dir, subject_id, tmin=0.0, tmax=4.0):
+    """
+        Load one subject's files for cross-validation.
+    """
+    desc_to_class = {"769": 0, "770": 1, "771": 2, "772": 3}
+
+    fname = f"A{subject_id:02d}T.gdf"
+    file_path = os.path.join(data_dir, fname)
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(file_path)
+
+    raw = mne.io.read_raw_gdf(file_path, preload=True, verbose="ERROR")
+
+    for ch in ["EOG-left", "EOG-central", "EOG-right"]:
+        if ch in raw.ch_names:
+            raw.drop_channels([ch])
+
+    bci_channels = raw.ch_names.copy()
+
+    raw.filter(l_freq=2.0, h_freq=None, verbose="ERROR")
+
+    events, event_id = mne.events_from_annotations(raw, verbose="ERROR")
+
+    epochs_event_id = {desc: event_id[desc] for desc in desc_to_class.keys() if desc in event_id}
+    if len(epochs_event_id) == 0:
+        raise RuntimeError(f"No MI events found in {fname}. event_id keys: {list(event_id.keys())}")
+
+    keep_codes = set(epochs_event_id.values())
+    mi_events = events[np.isin(events[:, 2], list(keep_codes))]
+    if mi_events.shape[0] == 0:
+        raise RuntimeError(f"No MI events after filtering in {fname}.")
+
+    epochs = mne.Epochs(
+        raw,
+        mi_events,
+        event_id=epochs_event_id,
+        tmin=tmin,
+        tmax=tmax,
+        baseline=None,
+        preload=True,
+        verbose="ERROR",
+    )
+
+    X = epochs.get_data().astype(np.float32)  # (N, C, T)
+
+    code_to_desc = {v: k for k, v in epochs_event_id.items()}
+    labels_internal = epochs.events[:, 2]
+    y = np.array([desc_to_class[code_to_desc[c]] for c in labels_internal], dtype=np.int64)
+
+    return X, y, bci_channels

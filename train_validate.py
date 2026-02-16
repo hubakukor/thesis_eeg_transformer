@@ -11,6 +11,13 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 from imblearn.over_sampling import BorderlineSMOTE
+from sklearn.model_selection import train_test_split
+import numpy as np
+import pandas as pd
+from datetime import datetime
+import os
+from loading import load_bci_subject_T, compute_channel_zscore_stats, apply_channel_zscore
+
 
 def train_model(model, train_dataset, val_dataset,
                          epochs=50, optimizer=None, lr=0.0005, patience=5,
@@ -400,6 +407,7 @@ def validate_model_old(model, X_test, Y_test, return_preds_targets=False, plot_c
     model.eval()  # Set model to evaluation mode
 
     criterion = nn.CrossEntropyLoss()
+    # criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
     # Convert and load test data
     val_dataset = TensorDataset(torch.from_numpy(X_test).float(), Y_test)
@@ -446,3 +454,258 @@ def validate_model_old(model, X_test, Y_test, return_preds_targets=False, plot_c
         return avg_loss, accuracy, balanced_acc, all_preds, all_targets
     else:
         return avg_loss, accuracy, balanced_acc
+
+
+
+
+
+def run_loocv_bci(
+    data_dir: str,
+    model_fn,
+    tmin: float = 0.0,
+    tmax: float = 4.0,
+    epochs: int = 50,
+    patience: int = 7,
+    batch_size_train: int = 16,
+    batch_size_val: int = 32,
+    lr: float = 5e-4,
+    weight_decay: float = 0.01,
+    val_ratio: float = 0.1,
+    subjects=range(1, 10),            # A01..A09
+    save_xlsx: bool = True,
+):
+    """
+    Leave-one-subject-out CV for BCI IV-2a
+    """
+    # 1) Load all subjects
+    all_data = []
+    ch_ref = None
+    for sid in subjects:
+        Xs, ys, ch_names = load_bci_subject_T(data_dir, sid, tmin=tmin, tmax=tmax)
+        if ch_ref is None:
+            ch_ref = ch_names
+        else:
+            if ch_names != ch_ref:
+                raise RuntimeError("Channel lists differ across subjects.")
+        all_data.append((sid, Xs, ys))
+
+    # 2) check shapes
+    C = all_data[0][1].shape[1]
+    T = all_data[0][1].shape[2]
+    print(f"Loaded {len(all_data)} subjects. Common shape: C={C}, T={T}")
+
+    results = []
+
+    # 3) LOO loop
+    for fold_idx, (held_sid, X_te_raw, y_te_np) in enumerate(all_data, start=1):
+        # Train pool = all other subjects
+        X_tr_pool = np.concatenate([X for sid, X, y in all_data if sid != held_sid], axis=0)
+        y_tr_pool = np.concatenate([y for sid, X, y in all_data if sid != held_sid], axis=0)
+
+        # Validation split from train pool
+        X_tr_raw, X_val_raw, y_tr_np, y_val_np = train_test_split(
+            X_tr_pool,
+            y_tr_pool,
+            test_size=val_ratio,
+            random_state=42,
+            stratify=y_tr_pool,
+        )
+
+        # Train-only z-score stats
+        mean, std = compute_channel_zscore_stats(X_tr_raw)
+        X_tr  = apply_channel_zscore(X_tr_raw, mean, std).astype(np.float32)
+        X_val = apply_channel_zscore(X_val_raw, mean, std).astype(np.float32)
+        X_te  = apply_channel_zscore(X_te_raw, mean, std).astype(np.float32)
+
+        # Torch datasets
+        train_ds = TensorDataset(torch.from_numpy(X_tr),  torch.from_numpy(y_tr_np).long())
+        val_ds   = TensorDataset(torch.from_numpy(X_val), torch.from_numpy(y_val_np).long())
+        y_te_t   = torch.from_numpy(y_te_np).long()
+
+        # NEW model per fold
+        model = model_fn()
+
+        # Optimizer per fold
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+        print(f"\n=== Fold {fold_idx}/{len(all_data)} - Test subject: A{held_sid:02d}T ===")
+
+        model = train_model(
+            model=model,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            epochs=epochs,
+            lr=lr,
+            patience=patience,
+            batch_size_train=batch_size_train,
+            batch_size_val=batch_size_val,
+            optimizer=optimizer,
+        )
+
+        test_loss, test_acc, test_bal_acc = evaluate_model(
+            model=model,
+            X=X_te,
+            Y=y_te_t,
+            crop_len=T,
+            n_crops=1,
+            plot_confusion_matrix=False,
+        )
+
+        results.append({
+            "fold": fold_idx,
+            "test_subject": f"A{held_sid:02d}T",
+            "test_loss": float(test_loss),
+            "test_acc": float(test_acc),
+            "test_bal_acc": float(test_bal_acc),
+        })
+
+        print(f"Fold result - Acc: {test_acc:.4f}, BalAcc: {test_bal_acc:.4f}")
+
+    df = pd.DataFrame(results)
+
+    print("\n=== LOSO Summary ===")
+    print(df)
+    print("\nMean ± std:")
+    print("Acc:   ", df["test_acc"].mean(), df["test_acc"].std())
+    print("BalAcc:", df["test_bal_acc"].mean(), df["test_bal_acc"].std())
+
+    if save_xlsx:
+        os.makedirs("results_xlsx", exist_ok=True)
+        out = os.path.join("results_xlsx", f"bci_loocv_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+        df.to_excel(out, index=False)
+        print("\nSaved:", out)
+
+    return df
+
+def filter_to_overlap_3class(X, y, keep=(0, 1, 2)):
+    """
+    Keep only classes in `keep`.
+    X: [N,C,T], y: [N]
+    Returns filtered X,y.
+    """
+    y = np.asarray(y)
+    mask = np.isin(y, keep)
+    Xf = X[mask]
+    yf = y[mask]
+    return Xf, yf
+
+
+def run_loocv_bci_overlap3(
+    data_dir: str,
+    model_fn,
+    tmin: float = 0.0,
+    tmax: float = 4.0,
+    epochs: int = 50,
+    patience: int = 7,
+    batch_size_train: int = 16,
+    batch_size_val: int = 32,
+    lr: float = 5e-4,
+    weight_decay: float = 0.01,
+    val_ratio: float = 0.1,
+    subjects=range(1, 10),
+    save_xlsx: bool = True,
+):
+    # Load all subjects
+    all_data = []
+    ch_ref = None
+    for sid in subjects:
+        Xs, ys, ch_names = load_bci_subject_T(data_dir, sid, tmin=tmin, tmax=tmax)
+        if ch_ref is None:
+            ch_ref = ch_names
+        else:
+            if ch_names != ch_ref:
+                raise RuntimeError("Channel lists differ across subjects.")
+        all_data.append((sid, Xs, ys))
+
+    C = all_data[0][1].shape[1]
+    T = all_data[0][1].shape[2]
+    print(f"Loaded {len(all_data)} subjects. Common shape: C={C}, T={T}")
+    print("Keeping only overlap classes: 0=left, 1=right, 2=feet (dropping 3=tongue)")
+
+    results = []
+
+    for fold_idx, (held_sid, X_te_raw, y_te_raw) in enumerate(all_data, start=1):
+        # Build train pool
+        X_tr_pool = np.concatenate([X for sid, X, y in all_data if sid != held_sid], axis=0)
+        y_tr_pool = np.concatenate([y for sid, X, y in all_data if sid != held_sid], axis=0)
+
+        # Filter to overlap classes in both train pool and test subject
+        X_tr_pool, y_tr_pool = filter_to_overlap_3class(X_tr_pool, y_tr_pool, keep=(0, 1, 2))
+        X_te_f, y_te_f = filter_to_overlap_3class(X_te_raw, y_te_raw, keep=(0, 1, 2))
+
+        if len(np.unique(y_tr_pool)) < 3 or len(np.unique(y_te_f)) < 3:
+            print(f"Warning: fold {fold_idx} missing a class after filtering. Skipping.")
+            continue
+
+        # Validation split from train pool
+        X_tr_raw, X_val_raw, y_tr_np, y_val_np = train_test_split(
+            X_tr_pool,
+            y_tr_pool,
+            test_size=val_ratio,
+            random_state=42,
+            stratify=y_tr_pool,
+        )
+
+        # Train-only z-score
+        mean, std = compute_channel_zscore_stats(X_tr_raw)
+        X_tr  = apply_channel_zscore(X_tr_raw, mean, std).astype(np.float32)
+        X_val = apply_channel_zscore(X_val_raw, mean, std).astype(np.float32)
+        X_te  = apply_channel_zscore(X_te_f, mean, std).astype(np.float32)
+
+        # Torch datasets
+        train_ds = TensorDataset(torch.from_numpy(X_tr),  torch.from_numpy(y_tr_np).long())
+        val_ds   = TensorDataset(torch.from_numpy(X_val), torch.from_numpy(y_val_np).long())
+        y_te_t   = torch.from_numpy(y_te_f).long()
+
+        model = model_fn()  # must output num_classes=3
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+        print(f"\n=== Fold {fold_idx}/{len(all_data)} - Test subject: A{held_sid:02d}T (3-class) ===")
+
+        model = train_model(
+            model=model,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            epochs=epochs,
+            lr=lr,
+            patience=patience,
+            batch_size_train=batch_size_train,
+            batch_size_val=batch_size_val,
+            optimizer=optimizer,
+        )
+
+        test_loss, test_acc, test_bal_acc = evaluate_model(
+            model=model,
+            X=X_te,
+            Y=y_te_t,
+            crop_len=T,
+            n_crops=1,
+            plot_confusion_matrix=False,
+        )
+
+        results.append({
+            "fold": fold_idx,
+            "test_subject": f"A{held_sid:02d}T",
+            "n_test": int(len(y_te_f)),
+            "test_loss": float(test_loss),
+            "test_acc": float(test_acc),
+            "test_bal_acc": float(test_bal_acc),
+        })
+
+        print(f"Fold result - Acc: {test_acc:.4f}, BalAcc: {test_bal_acc:.4f}")
+
+    df = pd.DataFrame(results)
+
+    print("\n=== LOSO Summary (3-class overlap) ===")
+    print(df)
+    print("\nMean ± std:")
+    print("Acc:   ", df["test_acc"].mean(), df["test_acc"].std())
+    print("BalAcc:", df["test_bal_acc"].mean(), df["test_bal_acc"].std())
+
+    if save_xlsx:
+        os.makedirs("results_xlsx", exist_ok=True)
+        out = os.path.join("results_xlsx", f"bci_loocv_overlap3_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+        df.to_excel(out, index=False)
+        print("\nSaved:", out)
+
+    return df
