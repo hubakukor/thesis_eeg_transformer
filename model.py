@@ -414,3 +414,151 @@ class TFViT2(nn.Module):
         # Classify using CLS output
         out = x[:, 0, :]      # (B,D)
         return self.head(out)
+
+class EEGTransformerModelV2(nn.Module):
+    """
+    Modified EEG Transformer with downsampling
+    CNN -> temporal downsample -> Transformer -> CLS pooling -> classifier
+    Input:  x [B, C, T]
+    Output: logits [B, num_classes]
+    """
+
+    def __init__(
+        self,
+        input_channels=63,
+        seq_len=1501,                 # original input length (used only for max-pos-embed sizing)
+        d_model=128,
+        nhead=4,
+        num_encoder_layers=2,
+        num_classes=2,
+        embedding_type="sinusoidal",
+        conv_block_type="multi",
+        # NEW:
+        downsample_stride=4,          # token reduction factor
+        downsample_kernel=9,          # odd kernel for "same-ish" behavior
+        dropout=0.2,                  # slightly stronger regularization
+        use_cls_token=True,
+        max_pos_len=None,             # if None -> computed from seq_len and stride
+    ):
+        super().__init__()
+
+        # ---- CNN feature extractor (unchanged) ----
+        if conv_block_type == "multi":
+            self.conv = MultiKernelTemporalSpatial(
+                input_channels=input_channels,
+                kernel_sizes=(11, 15, 21, 25, 31, 39),
+                total_time_channels=96,
+                out_channels_after_spatial=128,
+            )
+        elif conv_block_type == "single":
+            self.conv = nn.Sequential(
+                nn.Conv2d(in_channels=1, out_channels=64, kernel_size=(1, 25), padding=(0, 12)),
+                nn.BatchNorm2d(64),
+                nn.ReLU(),
+                nn.Conv2d(64, 128, kernel_size=(input_channels, 1), padding=(0, 0)),
+                nn.BatchNorm2d(128),
+                nn.ReLU(),
+            )
+        else:
+            raise ValueError(f"Unknown conv_block_type={conv_block_type}")
+
+        #temporal downsampling on [B, 128, T] ----
+        pad = downsample_kernel // 2
+        self.downsample = nn.Sequential(
+            nn.Conv1d(
+                in_channels=128,
+                out_channels=128,
+                kernel_size=downsample_kernel,
+                stride=downsample_stride,
+                padding=pad,
+                bias=False,
+            ),
+            nn.BatchNorm1d(128),
+            nn.GELU(),
+        )
+        self.downsample_stride = downsample_stride
+
+        # ---- Projection to d_model ----
+        self.proj = nn.Linear(128, d_model)
+
+        # ---- CLS token ----
+        self.use_cls_token = use_cls_token
+        if use_cls_token:
+            self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+            nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+        # ---- Positional embedding (make it SAFE for downsampled length) ----
+        if max_pos_len is None:
+            # rough upper bound for downsampled length
+            max_pos_len = (seq_len + downsample_stride - 1) // downsample_stride
+            if use_cls_token:
+                max_pos_len += 1
+
+        self.embedding_type = embedding_type
+        if embedding_type == "none":
+            self.positional_embedding = None
+        elif embedding_type == "sinusoidal":
+            self.positional_embedding = SinusoidalPositionalEmbedding(max_pos_len, d_model)
+        elif embedding_type == "learnable":
+            self.positional_embedding = LearnablePositionalEmbedding(max_pos_len, d_model)
+        else:
+            raise ValueError(f"Unknown embedding_type={embedding_type}")
+
+        # ---- Transformer (batch_first so shapes are simpler) ----
+        enc_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=4 * d_model,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(enc_layer, num_layers=num_encoder_layers)
+
+        self.out_dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(d_model, num_classes)
+
+    def forward(self, x):
+        # x: [B, C, T]
+        x = x.unsqueeze(1)           # [B, 1, C, T]
+        x = self.conv(x)             # [B, 128, 1, T]
+        x = x.squeeze(2)             # [B, 128, T]
+
+        # NEW: downsample time -> fewer tokens
+        x = self.downsample(x)       # [B, 128, T_ds]
+
+        # tokens: [B, T_ds, 128]
+        x = x.transpose(1, 2)
+
+        # proj -> [B, T_ds, D]
+        x = self.proj(x)
+
+        # prepend CLS
+        if self.use_cls_token:
+            cls = self.cls_token.expand(x.size(0), -1, -1)   # [B, 1, D]
+            x = torch.cat([cls, x], dim=1)                   # [B, 1+T_ds, D]
+
+        # add positional embedding (slice to actual length)
+        if self.positional_embedding is not None:
+            # your embedding modules probably expect [seq, batch, d] currently
+            # so we handle both possible conventions safely:
+            if getattr(self.positional_embedding, "batch_first", False):
+                x = self.positional_embedding(x)
+            else:
+                # convert [B, S, D] -> [S, B, D] -> embed -> back
+                x_t = x.transpose(0, 1)
+                x_t = self.positional_embedding(x_t)
+                x = x_t.transpose(0, 1)
+
+        # transformer
+        x = self.transformer(x)      # [B, S, D]
+
+        # pool
+        if self.use_cls_token:
+            x = x[:, 0, :]           # CLS
+        else:
+            x = x.mean(dim=1)
+
+        x = self.out_dropout(x)
+        return self.fc(x)
