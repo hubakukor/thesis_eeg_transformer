@@ -261,40 +261,10 @@ def normalize_train_stats(Xtr, Xva, Xte):
     return (Xtr - mu) / std, (Xva - mu) / std, (Xte - mu) / std
 
 def main():
-    # Load your BCI data with your existing loader
-    X_tr, X_val, X_te, y_tr, y_val, y_te, ch_names = load_bci_dataset(
-        data_dir="datasets/BCICIV_2a_gdf",
-        tmin=0.0,
-        tmax=4.0,
-    )
+    # The dashboard and command line use the same saved experiment runner.
+    from experiments import cli
+    cli()
 
-    # 1) Whole-trial mu/beta features
-    Xtr_mb = eeg_to_mu_beta_logpower_fft(X_tr, sfreq=250)
-    Xva_mb = eeg_to_mu_beta_logpower_fft(X_val, sfreq=250)
-    Xte_mb = eeg_to_mu_beta_logpower_fft(X_te, sfreq=250)
-
-    print("Mu/Beta feature shapes:", Xtr_mb.shape, Xva_mb.shape, Xte_mb.shape)  # (N, 22, 2)
-
-    # 2) Normalize (train stats only)
-    Xtr_mb, Xva_mb, Xte_mb = normalize_train_stats(Xtr_mb, Xva_mb, Xte_mb)
-
-    # 3) Flatten to (N, 22*2)
-    Xtr_flat = Xtr_mb.reshape(len(Xtr_mb), -1)
-    Xva_flat = Xva_mb.reshape(len(Xva_mb), -1)
-    Xte_flat = Xte_mb.reshape(len(Xte_mb), -1)
-
-    # 4) Train simple classifier
-    clf = LogisticRegression(max_iter=2000, n_jobs=-1, class_weight="balanced")
-    clf.fit(Xtr_flat, y_tr)
-
-    # 5) Test
-    y_pred = clf.predict(Xte_flat)
-    acc = accuracy_score(y_te, y_pred)
-    bal_acc = balanced_accuracy_score(y_te, y_pred)
-
-    print("\n=== Whole-trial Mu/Beta baseline ===")
-    print(f"Accuracy:      {acc:.4f}")
-    print(f"Balanced Acc:  {bal_acc:.4f}")
 
 if __name__ == "__main__":
     main()
