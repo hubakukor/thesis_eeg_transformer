@@ -1,5 +1,4 @@
-# Python 3.10+ (NumPy 2.1 and SciPy 1.14 require it).
-# Direct dependencies; pip installs their transitive dependencies automatically.
+# Python version: 3.12.3
 
 # EEG processing and numerical analysis
 numpy==2.1.3
