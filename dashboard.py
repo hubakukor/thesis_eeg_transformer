@@ -11,7 +11,7 @@ from experiments import (ACTIVE, CLASSES, ROOT, RUNS_DIR, ExperimentConfig, canc
 
 
 st.set_page_config(page_title="EEG Experiment Lab", page_icon="🧠", layout="wide")
-st.title("EEG Experiment Lab")
+st.title("EEG Classification Experiments")
 st.caption("Configure a Transformer run, follow training, and compare saved experiments.")
 
 
@@ -70,9 +70,18 @@ def show_details(run):
 with st.sidebar:
     st.header("New experiment")
     dataset = st.selectbox("Dataset", ["bci", "physionet"], format_func=lambda v: "BCI IV 2a" if v == "bci" else "PhysioNet · imagery only")
+    if st.button("Download dataset", width="stretch"):
+        from dataset_download import download_dataset
+        try:
+            with st.spinner("Checking dataset and downloading if needed. Large files may take several minutes..."):
+                path, downloaded = download_dataset(dataset)
+            if downloaded:
+                st.success(f"Downloaded and validated: {path.name}")
+            else:
+                st.info(f"Already in the project's datasets folder: {path.name}")
+        except Exception as exc:
+            st.error(f"Dataset download failed: {exc}")
     st.caption("Classes: " + ", ".join(CLASSES[dataset]))
-    if dataset == "physionet":
-        st.caption("Includes rest periods from imagery runs. Loading requires several GiB of RAM.")
     with st.form("experiment_form"):
         name = st.text_input("Experiment name", placeholder="Optional descriptive name", max_chars=120)
         epochs = st.number_input("Epochs", min_value=1, max_value=1000, value=5, step=1)
@@ -96,8 +105,6 @@ with st.sidebar:
         except Exception as exc:
             st.error(str(exc))
 
-st.info("This version uses a trial split, so subjects can appear in both sets. "
-        "Use these runs for exploration; reserve separate test data before selecting final thesis settings.")
 live, history = st.tabs(["Live experiment", "Compare saved results"])
 
 
